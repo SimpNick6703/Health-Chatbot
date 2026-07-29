@@ -1,0 +1,42 @@
+# Version Control & Environment
+.git
+.gitignore
+.dockerignore
+.env
+.env.*
+.venv/
+venv/
+env/
+
+# Documentation
+README.md
+ARCHITECTURE.md
+LOGIC.md
+
+# Deploy Scripts
+deploy.ps1
+
+# Database & Persistent Data
+data/
+*.db
+.chroma/
+chroma_data/
+
+# Python Cache & Testing
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+.benchmarks/
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+Thumbs.db
+.DS_Store

@@ -1,0 +1,42 @@
+# Environment
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Data & Vector DB
+/data/
+*.db
+.chroma/
+chroma_data/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Deploy
+deploy.ps1
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.benchmarks/
