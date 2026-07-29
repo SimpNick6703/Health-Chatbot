@@ -53,7 +53,7 @@ class GeminiEmbeddingFunction(EmbeddingFunction):
             return [data.embedding for data in res.data]
         except Exception as exc:
             logger.error(f"Gemini embedding call failed: {exc}")
-            return [[0.0] * 768 for _ in input]
+            return [[0.0] * 3072 for _ in input]
 
 
 class RAGManager:
