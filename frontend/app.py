@@ -19,17 +19,17 @@ st.set_page_config(
     layout="wide"
 )
 
-# Custom CSS styling for dark theme presentation & aligned sidebar buttons
+# Custom CSS styling for dark theme presentation, tight sidebar padding & aligned buttons
 st.markdown("""
 <style>
     .disclaimer-banner {
         background-color: rgba(245, 158, 11, 0.12);
         border-left: 4px solid #f59e0b;
-        padding: 12px 16px;
+        padding: 10px 14px;
         border-radius: 6px;
         color: #fef08a;
         font-weight: 500;
-        margin-bottom: 20px;
+        margin-bottom: 16px;
     }
     .citation-container {
         display: flex;
@@ -65,10 +65,20 @@ st.markdown("""
         color: #cbd5e1;
         line-height: 1.4;
     }
+    /* Compact Sidebar Styling */
+    div[data-testid="stSidebarUserContent"] {
+        padding-top: 0.8rem;
+        padding-bottom: 0.8rem;
+    }
+    div[data-testid="stSidebar"] div.stButton > button {
+        padding-top: 4px;
+        padding-bottom: 4px;
+        font-size: 0.88em;
+    }
     div[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"] {
         align-items: center;
-        gap: 6px;
-        margin-bottom: 4px;
+        gap: 4px;
+        margin-bottom: 2px;
     }
     div[data-testid="stSidebar"] button {
         text-align: left;
@@ -80,11 +90,23 @@ st.markdown("""
         color: #f87171;
         border-color: #7f1d1d;
         text-align: center;
-        font-size: 0.82em;
+        font-size: 0.8em;
+        padding-left: 2px;
+        padding-right: 2px;
     }
     div[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"] > div:nth-child(2) button:hover {
         background-color: #7f1d1d;
         color: #ffffff;
+    }
+    div[data-testid="stSidebar"] hr {
+        margin-top: 8px !important;
+        margin-bottom: 8px !important;
+        border-color: #334155 !important;
+    }
+    div[data-testid="stSidebar"] h3 {
+        padding-top: 4px;
+        padding-bottom: 2px;
+        font-size: 1.05rem;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -103,26 +125,6 @@ def fetch_active_sessions() -> List[Dict[str, Any]]:
     except Exception as exc:
         logger.error(f"Failed to fetch sessions from backend: {exc}")
     return []
-
-
-def create_new_remote_session(title: str = "New Chat") -> str:
-    """Create a new session on the backend.
-
-    Args:
-        title: Title string.
-
-    Returns:
-        New session ID.
-    """
-    try:
-        resp = httpx.post(f"{BACKEND_URL}/api/session", json={"title": title}, timeout=5.0)
-        if resp.status_code == 201:
-            return resp.json()["session_id"]
-    except Exception as exc:
-        logger.error(f"Failed to create new session: {exc}")
-
-    import uuid
-    return str(uuid.uuid4())
 
 
 def rename_remote_session(session_id: str, new_title: str) -> None:
@@ -228,8 +230,6 @@ with st.sidebar:
     st.title("Healthcare AI")
     st.caption("Tool-Augmented Health Assistant & Guardrail System")
 
-    st.markdown("---")
-
     if st.button("+ Start New Chat", use_container_width=True):
         st.session_state.session_id = str(uuid.uuid4())
         st.session_state.messages = []
@@ -265,36 +265,35 @@ with st.sidebar:
                 if st.button("Delete", key=f"del_btn_{s_id}", use_container_width=True):
                     archive_remote_session(s_id)
                     if s_id == st.session_state.session_id:
-                        st.session_state.session_id = create_new_remote_session()
+                        st.session_state.session_id = str(uuid.uuid4())
                         st.session_state.messages = []
                     st.rerun()
     else:
         st.caption("No past sessions found.")
 
-    st.markdown("---")
-
-    # Rename Current Session UI
+    # Conditionally render Rename Current Session UI only for saved non-new sessions
     active_sess_obj = next((s for s in active_sessions if s["session_id"] == st.session_state.session_id), None)
-    active_title = active_sess_obj["title"] if active_sess_obj else "New Chat"
-
-    st.markdown(f"**Active Session:** `{active_title}`")
-    if not st.session_state.editing_title:
-        if st.button("Rename Chat", use_container_width=True):
-            st.session_state.editing_title = True
-            st.rerun()
-    else:
-        new_title_input = st.text_input("New title:", value=active_title, key="new_title_input")
-        col_save, col_cancel = st.columns(2)
-        with col_save:
-            if st.button("Save"):
-                if new_title_input.strip():
-                    rename_remote_session(st.session_state.session_id, new_title_input.strip())
-                st.session_state.editing_title = False
+    if active_sess_obj and active_sess_obj.get("title") and active_sess_obj["title"] != "New Chat":
+        st.markdown("---")
+        active_title = active_sess_obj["title"]
+        st.markdown(f"**Active Session:** `{active_title}`")
+        if not st.session_state.editing_title:
+            if st.button("Rename Chat", use_container_width=True):
+                st.session_state.editing_title = True
                 st.rerun()
-        with col_cancel:
-            if st.button("Cancel"):
-                st.session_state.editing_title = False
-                st.rerun()
+        else:
+            new_title_input = st.text_input("New title:", value=active_title, key="new_title_input")
+            col_save, col_cancel = st.columns(2)
+            with col_save:
+                if st.button("Save"):
+                    if new_title_input.strip():
+                        rename_remote_session(st.session_state.session_id, new_title_input.strip())
+                    st.session_state.editing_title = False
+                    st.rerun()
+            with col_cancel:
+                if st.button("Cancel"):
+                    st.session_state.editing_title = False
+                    st.rerun()
 
     st.markdown("---")
     st.markdown("### Sample Prompts")
