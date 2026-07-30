@@ -1,8 +1,8 @@
-"""Async LLM client wrapper for streaming completions with Portkey observability headers."""
+"""Async LLM client wrapper for streaming completions and tool selection calls with Portkey observability headers."""
 
 import json
 import logging
-from typing import List, Dict, AsyncGenerator
+from typing import List, Dict, Any, Optional, AsyncGenerator
 from openai import AsyncOpenAI
 
 from config import settings
@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 class LLMClient:
-    """Async wrapper for OpenAI-compatible chat completion LLM calls with streaming support."""
+    """Async wrapper for OpenAI-compatible chat completion LLM calls with tool selection & streaming support."""
 
     def __init__(self) -> None:
         """Initialize AsyncOpenAI client targeting BASE_URL."""
@@ -20,13 +20,43 @@ class LLMClient:
             api_key=settings.API_KEY or "dummy_key"
         )
 
+    async def generate_tool_completion(
+        self, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]], session_id: str
+    ) -> Any:
+        """Execute non-streaming completion to allow model to select tool calls if needed.
+
+        Args:
+            messages: Conversation messages list.
+            tools: OpenAI Function tool specs list.
+            session_id: Session ID for Portkey headers.
+
+        Returns:
+            OpenAI ChatCompletion choice message object.
+        """
+        headers = settings.get_portkey_headers(session_id)
+
+        try:
+            res = await self.client.chat.completions.create(
+                model=settings.MODEL_NAME,
+                messages=messages,
+                tools=tools,
+                tool_choice="auto",
+                temperature=0.2,
+                user=session_id,
+                extra_headers=headers
+            )
+            return res.choices[0].message
+        except Exception as exc:
+            logger.error(f"LLM tool completion request failed: {exc}")
+            return None
+
     async def generate_stream(
-        self, messages: List[Dict[str, str]], session_id: str
+        self, messages: List[Dict[str, Any]], session_id: str
     ) -> AsyncGenerator[str, None]:
         """Stream token chunks from chat completion endpoint.
 
         Args:
-            messages: Formatted list of message dicts (system, user, assistant).
+            messages: Formatted list of message dicts (system, user, assistant, tool).
             session_id: Session ID for Portkey observability tracking.
 
         Yields:

@@ -19,11 +19,23 @@ class SessionResponse(BaseModel):
 
 
 class RetrievedChunk(BaseModel):
-    """Model representing a chunk retrieved from ChromaDB."""
+    """Model representing a chunk retrieved from vector database or API."""
 
     content: str = Field(..., description="Text content of the retrieved chunk.")
-    source: str = Field(..., description="Filename of the knowledge source document.")
+    source: str = Field(..., description="Filename or API source identifier.")
     score: float = Field(..., description="Similarity distance or relevance score.")
+    heading: Optional[str] = Field(None, description="Section heading or topic title.")
+    snippet_text: Optional[str] = Field(None, description="Granular text snippet excerpt.")
+    url: Optional[str] = Field(None, description="Direct URL link if external API source.")
+
+
+class CitationItem(BaseModel):
+    """Structured citation item returned to frontend for UI rendering."""
+
+    title: str = Field(..., description="Citation title or filename.")
+    source_type: Literal["local_kb", "medlineplus_api"] = Field(..., description="Origin category.")
+    url: Optional[str] = Field(None, description="Direct HTTP link if available.")
+    snippet: str = Field(..., description="Exact text chunk snippet excerpt.")
 
 
 class IntentResult(BaseModel):
@@ -58,7 +70,7 @@ class StreamTokenEvent(BaseModel):
 class StreamStatusEvent(BaseModel):
     """SSE event payload for status transitions."""
 
-    stage: Literal["checking_hallucination", "verified"] = Field(
+    stage: Literal["executing_tools", "checking_hallucination", "verified"] = Field(
         ..., description="Current processing stage identifier."
     )
 
@@ -66,11 +78,15 @@ class StreamStatusEvent(BaseModel):
 class StreamDoneEvent(BaseModel):
     """SSE event payload emitted when stream completes successfully."""
 
-    sources: List[str] = Field(..., description="List of knowledge source files used.")
+    sources: List[str] = Field(default_factory=list, description="List of simple source titles.")
+    citations: List[CitationItem] = Field(default_factory=list, description="Structured citation objects.")
 
 
 class StreamErrorEvent(BaseModel):
-    """SSE event payload emitted when a guardrail or error stops stream."""
+    """SSE event payload emitted when a guardrail or hallucination error occurs."""
 
     type: str = Field(..., description="Category of error (e.g., hallucination, moderation).")
     message: str = Field(..., description="User-facing refusal or error message.")
+    is_hallucinated: bool = Field(default=False, description="Whether hallucination check triggered.")
+    raw_response: Optional[str] = Field(None, description="Unverified response text for collapsed UI container.")
+    citations: List[CitationItem] = Field(default_factory=list, description="Associated citations if available.")

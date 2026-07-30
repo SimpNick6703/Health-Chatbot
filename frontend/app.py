@@ -19,7 +19,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Custom CSS styling for dark theme presentation
+# Custom CSS styling for dark theme presentation & horizontal citations
 st.markdown("""
 <style>
     .disclaimer-banner {
@@ -31,15 +31,39 @@ st.markdown("""
         font-weight: 500;
         margin-bottom: 20px;
     }
-    .source-tag {
-        display: inline-block;
-        background-color: #0369a1;
-        color: #e0f2fe;
-        padding: 3px 10px;
-        border-radius: 12px;
-        font-size: 0.82em;
-        font-weight: 500;
-        margin-right: 6px;
+    .citation-container {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 12px;
+    }
+    .citation-card {
+        background-color: #1e293b;
+        border: 1px solid #334155;
+        border-radius: 8px;
+        padding: 10px 14px;
+        font-size: 0.88em;
+        color: #e2e8f0;
+        flex: 1 1 calc(50% - 10px);
+        min-width: 280px;
+    }
+    .medline-link {
+        color: #38bdf8 !important;
+        text-decoration: none;
+        font-weight: 600;
+    }
+    .medline-link:hover {
+        text-decoration: underline;
+    }
+    .snippet-box {
+        background-color: #0f172a;
+        border-left: 3px solid #38bdf8;
+        padding: 8px 12px;
+        margin-top: 6px;
+        border-radius: 4px;
+        font-size: 0.86em;
+        color: #cbd5e1;
+        line-height: 1.4;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -63,15 +87,46 @@ def get_new_session_id() -> str:
 
 
 def delete_remote_session(session_id: str) -> None:
-    """Send request to backend to purge session history.
+    """Send request to backend to archive session history.
 
     Args:
-        session_id: Session ID to delete.
+        session_id: Session ID to archive.
     """
     try:
         httpx.delete(f"{BACKEND_URL}/api/session/{session_id}", timeout=5.0)
     except Exception as exc:
-        logger.error(f"Failed to delete remote session {session_id}: {exc}")
+        logger.error(f"Failed to archive remote session {session_id}: {exc}")
+
+
+def render_citations_ui(citations: list) -> None:
+    """Render horizontal citations flexbox with clickable links and exact snippet excerpts.
+
+    Args:
+        citations: List of CitationItem dicts.
+    """
+    if not citations:
+        return
+
+    with st.expander("📚 Knowledge Base Citations & Excerpts", expanded=False):
+        cols = st.columns(min(len(citations), 2))
+        for idx, cit in enumerate(citations):
+            col = cols[idx % len(cols)]
+            with col:
+                title = cit.get("title", "Source")
+                source_type = cit.get("source_type", "local_kb")
+                url = cit.get("url")
+                snippet = cit.get("snippet", "")
+
+                if source_type == "medlineplus_api" and url:
+                    st.markdown(
+                        f"🌐 **[MedlinePlus: {title}]({url})**",
+                        unsafe_allow_html=True
+                    )
+                else:
+                    st.markdown(f"📄 **{title}**")
+
+                if snippet:
+                    st.caption(f"*Excerpt:* {snippet}")
 
 
 # Initialize Session State
@@ -87,7 +142,7 @@ if "pending_prompt" not in st.session_state:
 # Sidebar UI
 with st.sidebar:
     st.title("🏥 Healthcare AI")
-    st.caption("Grounded Health Assistant & Guardrail System")
+    st.caption("Tool-Augmented Health Assistant & Guardrail System")
 
     st.markdown("---")
 
@@ -104,10 +159,10 @@ with st.sidebar:
 
     sample_prompts = {
         "🤒 Symptoms": "What should I do to care for a fever and when should I see a doctor?",
-        "🩺 Conditions": "What are the common symptoms and risk factors of Type 2 Diabetes?",
-        "🏃 Lifestyle": "What are the recommended sleep hygiene guidelines for adults?",
+        "🫁 Asthma": "What is asthma, what causes it, and how is it managed?",
+        "🩺 Conditions": "What are common symptoms and risk factors of Type 2 Diabetes?",
+        "🏃 Lifestyle": "What are recommended sleep hygiene guidelines for adults?",
         "🥗 Nutrition": "How much sodium per day is recommended for heart health?",
-        "💉 Prevention": "How often should adults get blood pressure and cholesterol screenings?",
         "🩹 First Aid": "How should I treat a minor first-degree burn at home?"
     }
 
@@ -133,14 +188,18 @@ st.markdown(
 # Render Chat History
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
-        if "sources" in msg and msg["sources"]:
-            with st.expander("📚 Knowledge Sources"):
-                for src in msg["sources"]:
-                    st.markdown(f'<span class="source-tag">📄 {src}</span>', unsafe_allow_html=True)
+        if msg.get("is_hallucinated"):
+            st.warning("⚠️ Potential hallucination or unverified claim detected.")
+            with st.expander("⚠️ View unverified response (Use with caution)", expanded=False):
+                st.markdown(msg["content"])
+        else:
+            st.markdown(msg["content"])
+
+        if "citations" in msg and msg["citations"]:
+            render_citations_ui(msg["citations"])
 
 
-# Determine prompt input (either typed or clicked from sidebar preset)
+# Determine prompt input
 user_prompt = st.chat_input("Ask a general health question...")
 if st.session_state.pending_prompt:
     user_prompt = st.session_state.pending_prompt
@@ -158,7 +217,9 @@ if user_prompt:
         status_placeholder = st.empty()
 
         full_response: str = ""
-        sources_list: list = []
+        citations_list: list = []
+        is_hallucinated: bool = False
+        raw_response: str = ""
         is_error: bool = False
         error_message: str = ""
 
@@ -183,21 +244,25 @@ if user_prompt:
 
                         elif event_type == "status":
                             stage = data.get("stage", "")
-                            if stage == "checking_hallucination":
-                                status_placeholder.info("🔍 Checking response against knowledge base for factual grounding...")
+                            if stage == "executing_tools":
+                                status_placeholder.info("⚡ Querying knowledge tools & MedlinePlus API...")
+                            elif stage == "checking_hallucination":
+                                status_placeholder.info("🔍 Verifying response factual consistency...")
                             elif stage == "verified":
                                 status_placeholder.success("✔ Factually verified against knowledge base.")
 
                         elif event_type == "error":
-                            is_error = True
-                            error_message = data.get(
-                                "message",
-                                "Hallucination detected, response discarded. Please try again or ask something else."
-                            )
+                            if data.get("is_hallucinated"):
+                                is_hallucinated = True
+                                raw_response = data.get("raw_response", full_response)
+                                citations_list = data.get("citations", [])
+                            else:
+                                is_error = True
+                                error_message = data.get("message", "An error occurred.")
                             break
 
                         elif event_type == "done":
-                            sources_list = data.get("sources", [])
+                            citations_list = data.get("citations", [])
                             break
 
         except Exception as exc:
@@ -212,17 +277,29 @@ if user_prompt:
                 "role": "assistant",
                 "content": f"✖ *{error_message}*"
             })
+        elif is_hallucinated:
+            message_placeholder.empty()
+            status_placeholder.warning("⚠️ Potential hallucination or unverified claim detected.")
+            with st.expander("⚠️ View unverified response (Use with caution)", expanded=False):
+                st.markdown(raw_response)
+
+            render_citations_ui(citations_list)
+
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": raw_response,
+                "is_hallucinated": True,
+                "citations": citations_list
+            })
         else:
             message_placeholder.markdown(full_response)
             status_placeholder.empty()
 
-            if sources_list:
-                with st.expander("📚 Knowledge Sources"):
-                    for src in sources_list:
-                        st.markdown(f'<span class="source-tag">📄 {src}</span>', unsafe_allow_html=True)
+            render_citations_ui(citations_list)
 
             st.session_state.messages.append({
                 "role": "assistant",
                 "content": full_response,
-                "sources": sources_list
+                "is_hallucinated": False,
+                "citations": citations_list
             })

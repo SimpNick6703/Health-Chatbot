@@ -3,7 +3,7 @@
 import re
 import logging
 import xml.etree.ElementTree as ET
-from typing import List, Optional
+from typing import List
 import httpx
 
 from models import RetrievedChunk
@@ -32,7 +32,7 @@ class MedlinePlusClient:
     """Async client for querying the official MedlinePlus Web Services API (NIH/NLM)."""
 
     async def search_health_topics(
-        self, query: str, max_results: int = 3
+        self, query: str, max_results: int = 2
     ) -> List[RetrievedChunk]:
         """Search MedlinePlus Developer API for health topics matching the query.
 
@@ -75,15 +75,19 @@ class MedlinePlusClient:
                         summary = strip_html_tags(text_val)
 
                 if summary and title:
+                    snippet = summary[:250] + ("..." if len(summary) > 250 else "")
                     source_label = f"MedlinePlus API ({title})"
                     content_text = f"Title: {title}\nSummary: {summary}\nURL: {url}"
                     chunks.append(RetrievedChunk(
                         content=content_text,
                         source=source_label,
-                        score=0.9
+                        score=0.9,
+                        heading=title,
+                        snippet_text=snippet,
+                        url=url
                     ))
 
-            logger.info(f"Retrieved {len(chunks)} topics from MedlinePlus API for term '{query}'.")
+            logger.info(f"Retrieved {len(chunks)} topic snippets from MedlinePlus API for term '{query}'.")
             return chunks
 
         except Exception as exc:

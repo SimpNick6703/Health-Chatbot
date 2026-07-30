@@ -1,4 +1,4 @@
-"""Query processing router pipeline orchestrating guardrails, RAG retrieval, LLM streaming, and SSE event generation."""
+"""Query processing router pipeline orchestrating guardrails, OpenAI tool calling, LLM streaming, and structured SSE events."""
 
 import os
 import json
@@ -7,11 +7,10 @@ from typing import List, Dict, Any, AsyncGenerator
 
 from config import settings
 from guardrails import pii_detector, intent_classifier, input_moderator, hallucination_detector
-from rag import rag_manager
+from tools import HEALTHCARE_TOOLS, execute_tool_call
 from llm_client import llm_client
 from session import session_store
-
-from medlineplus import medlineplus_client
+from models import CitationItem, RetrievedChunk
 
 logger = logging.getLogger(__name__)
 
@@ -23,50 +22,32 @@ if os.path.exists(SYSTEM_PROMPT_PATH):
         SYSTEM_PROMPT_CONTENT = f.read()
 
 
-def format_messages(
+def format_system_messages(
     system_prompt: str,
     history: List[Dict[str, str]],
-    query: str,
-    chunks: List[Any]
-) -> List[Dict[str, str]]:
-    """Format prompt messages array for LLM completion API.
+    query: str
+) -> List[Dict[str, Any]]:
+    """Format base prompt messages array for LLM completion API.
 
     Args:
         system_prompt: System role prompt text.
         history: Conversation history list of dicts.
         query: Current user query text.
-        chunks: Retrieved RAG context chunks.
 
     Returns:
         Formatted list of message dictionaries.
     """
-    messages: List[Dict[str, str]] = [{"role": "system", "content": system_prompt}]
+    messages: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
 
-    # Append prior conversation turn history
     for msg in history:
         messages.append({"role": msg["role"], "content": msg["content"]})
 
-    # Construct user message with context chunks if available
-    if chunks:
-        context_str = "\n\n".join([
-            f"[Source: {c.source}]\n{c.content}" for c in chunks
-        ])
-        user_content = (
-            f"Context Chunks:\n{context_str}\n\n"
-            f"User Question: {query}"
-        )
-    else:
-        user_content = (
-            f"Context Chunks: None available in knowledge base.\n\n"
-            f"User Question: {query}"
-        )
-
-    messages.append({"role": "user", "content": user_content})
+    messages.append({"role": "user", "content": query})
     return messages
 
 
 async def process_query(session_id: str, user_message: str) -> AsyncGenerator[Dict[str, str], None]:
-    """Execute main query processing pipeline and yield SSE event dictionary objects.
+    """Execute tool-augmented query pipeline and yield SSE event dictionary objects.
 
     Args:
         session_id: Active session identifier.
@@ -86,7 +67,7 @@ async def process_query(session_id: str, user_message: str) -> AsyncGenerator[Di
 
     if intent.category != "safe" and intent.response:
         yield {"event": "token", "data": json.dumps({"token": intent.response})}
-        yield {"event": "done", "data": json.dumps({"sources": []})}
+        yield {"event": "done", "data": json.dumps({"sources": [], "citations": []})}
         await session_store.save_turn(
             session_id=session_id,
             user_msg=user_message,
@@ -102,7 +83,7 @@ async def process_query(session_id: str, user_message: str) -> AsyncGenerator[Di
         logger.warning(f"Session {session_id}: Input blocked by moderation.")
         refusal = input_moderator.MODERATION_REFUSAL_RESPONSE
         yield {"event": "token", "data": json.dumps({"token": refusal})}
-        yield {"event": "done", "data": json.dumps({"sources": []})}
+        yield {"event": "done", "data": json.dumps({"sources": [], "citations": []})}
         await session_store.save_turn(
             session_id=session_id,
             user_msg=user_message,
@@ -112,67 +93,129 @@ async def process_query(session_id: str, user_message: str) -> AsyncGenerator[Di
         )
         return
 
-    # 4. RAG Retrieval & MedlinePlus Web Service API Tool Integration
-    chunks = await rag_manager.retrieve(cleaned_text, session_id, top_k=settings.RAG_TOP_K)
-    medline_chunks = await medlineplus_client.search_health_topics(cleaned_text)
-    chunks.extend(medline_chunks)
-    logger.info(f"Session {session_id}: Combined {len(chunks)} context chunks (Local RAG + MedlinePlus API).")
-
-    # 5. Build Conversation Context
+    # 4. Build Conversation Context & Tool Calling Round
     history = await session_store.get_history(session_id, limit=settings.SESSION_MAX_TURNS)
-    messages = format_messages(SYSTEM_PROMPT_CONTENT, history, cleaned_text, chunks)
+    messages = format_system_messages(SYSTEM_PROMPT_CONTENT, history, cleaned_text)
 
-    # 6. Stream LLM Response
+    # Initial completion to check if LLM requests tool execution
+    tool_message = await llm_client.generate_tool_completion(messages, HEALTHCARE_TOOLS, session_id)
+    citations: List[CitationItem] = []
+    tool_chunks: List[RetrievedChunk] = []
+
+    if tool_message and getattr(tool_message, "tool_calls", None):
+        yield {"event": "status", "data": json.dumps({"stage": "executing_tools"})}
+
+        # Convert message object to dict format for context payload
+        tool_msg_dict = {
+            "role": "assistant",
+            "content": tool_message.content,
+            "tool_calls": [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments
+                    }
+                } for tc in tool_message.tool_calls
+            ]
+        }
+        messages.append(tool_msg_dict)
+
+        for tc in tool_message.tool_calls:
+            tool_name = tc.function.name
+            try:
+                args = json.loads(tc.function.arguments)
+            except Exception:
+                args = {}
+
+            output_text, retrieved = await execute_tool_call(tool_name, args, session_id)
+            tool_chunks.extend(retrieved)
+
+            for chunk in retrieved:
+                is_medline = "medlineplus" in chunk.source.lower()
+                source_type = "medlineplus_api" if is_medline else "local_kb"
+                title = chunk.heading or chunk.source
+                snippet = chunk.snippet_text or chunk.content[:200]
+                citations.append(CitationItem(
+                    title=title,
+                    source_type=source_type,
+                    url=chunk.url,
+                    snippet=snippet
+                ))
+
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": output_text
+            })
+
+    # 5. Stream Final LLM Token Response
     collected_response: str = ""
     async for token in llm_client.generate_stream(messages, session_id):
         collected_response += token
         yield {"event": "token", "data": json.dumps({"token": token})}
 
-    # 7. Hallucination Detection Verification Stage
+    # 6. Hallucination Detection Verification Stage
     yield {"event": "status", "data": json.dumps({"stage": "checking_hallucination"})}
 
-    chunk_texts = [c.content for c in chunks]
+    chunk_texts = [c.content for c in tool_chunks]
     is_hallucinated = await hallucination_detector.detect_hallucination(
         response_text=collected_response,
         source_chunks=chunk_texts,
         session_id=session_id
     )
 
+    citations_payload = [c.model_dump() for c in citations]
+    sources_payload = list(set(c.title for c in citations))
+
     if is_hallucinated:
-        logger.warning(f"Session {session_id}: Hallucination detected. Interrupting response.")
-        error_msg = "Hallucination detected, response discarded. Please try again or ask something else."
-        sources = list(set(c.source for c in chunks))
+        logger.warning(f"Session {session_id}: Hallucination detected.")
+        warn_msg = "Potential hallucination or unverified claim detected."
         await session_store.save_turn(
             session_id=session_id,
             user_msg=user_message,
-            assistant_msg=error_msg,
+            assistant_msg=collected_response,
             intent="safe",
-            sources=sources,
+            sources=sources_payload,
             had_pii=had_pii,
             is_hallucinated=True,
             flagged=True
         )
-        yield {"event": "error", "data": json.dumps({"type": "hallucination", "message": error_msg})}
+        yield {
+            "event": "error",
+            "data": json.dumps({
+                "type": "hallucination",
+                "is_hallucinated": True,
+                "message": warn_msg,
+                "raw_response": collected_response,
+                "citations": citations_payload
+            })
+        }
         return
 
-    # 8. Verification Complete
+    # 7. Verification Complete & Stream Disclaimer
     yield {"event": "status", "data": json.dumps({"stage": "verified"})}
 
-    # 9. Append Standard Disclaimer
     disclaimer = "\n\n*This is for informational purposes only. For medical advice or diagnosis, consult a professional.*"
     yield {"event": "token", "data": json.dumps({"token": disclaimer})}
 
-    # 10. Persist Turn & Send Done Event
+    # 8. Persist Turn & Yield Done Event
     final_answer = collected_response + disclaimer
-    sources = list(set(c.source for c in chunks))
     await session_store.save_turn(
         session_id=session_id,
         user_msg=user_message,
         assistant_msg=final_answer,
         intent="safe",
-        sources=sources,
+        sources=sources_payload,
         had_pii=had_pii,
         is_hallucinated=False,
         flagged=False
     )
-    yield {"event": "done", "data": json.dumps({"sources": sources})}
+    yield {
+        "event": "done",
+        "data": json.dumps({
+            "sources": sources_payload,
+            "citations": citations_payload
+        })
+    }

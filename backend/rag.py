@@ -76,7 +76,8 @@ class RAGManager:
         try:
             self.collection = self.chroma_client.get_or_create_collection(
                 name=self.collection_name,
-                embedding_function=self.embedding_fn
+                embedding_function=self.embedding_fn,
+                metadata={"hnsw:space": "cosine"}
             )
             if self.collection.count() > 0:
                 try:
@@ -87,13 +88,15 @@ class RAGManager:
                         self.chroma_client.delete_collection(self.collection_name)
                         self.collection = self.chroma_client.get_or_create_collection(
                             name=self.collection_name,
-                            embedding_function=self.embedding_fn
+                            embedding_function=self.embedding_fn,
+                            metadata={"hnsw:space": "cosine"}
                         )
         except Exception as exc:
             logger.error(f"Error initializing ChromaDB collection: {exc}")
             self.collection = self.chroma_client.get_or_create_collection(
                 name=self.collection_name,
-                embedding_function=self.embedding_fn
+                embedding_function=self.embedding_fn,
+                metadata={"hnsw:space": "cosine"}
             )
 
     @staticmethod
@@ -112,38 +115,60 @@ class RAGManager:
                 hasher.update(chunk)
         return hasher.hexdigest()
 
-    def chunk_text(self, text: str, chunk_size: int = 1200, overlap: int = 200) -> List[str]:
-        """Split text into overlapping character chunks cleanly on paragraph/sentence boundaries.
+    def chunk_text(self, text: str, max_chunk_chars: int = 350) -> List[Dict[str, str]]:
+        """Split Markdown document into concise, topic-focused ~300-character passages.
 
         Args:
-            text: Raw text to split.
-            chunk_size: Target maximum characters per chunk.
-            overlap: Overlap characters between consecutive chunks.
+            text: Raw Markdown text.
+            max_chunk_chars: Target maximum characters per chunk.
 
         Returns:
-            List of text chunks.
+            List of dicts containing 'content', 'heading', and 'snippet'.
         """
-        paragraphs = text.split("\n\n")
-        chunks: List[str] = []
-        current_chunk: List[str] = []
-        current_length: int = 0
+        lines = text.split("\n")
+        chunks: List[Dict[str, str]] = []
+        current_heading = "General Overview"
+        buffer: List[str] = []
+        buffer_len = 0
 
-        for para in paragraphs:
-            para = para.strip()
-            if not para:
+        for line in lines:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("# Source:") or stripped.startswith("# AI-curated"):
                 continue
 
-            if current_length + len(para) > chunk_size and current_chunk:
-                chunks.append("\n\n".join(current_chunk))
-                last = current_chunk[-1] if current_chunk else ""
-                current_chunk = [last] if len(last) < overlap else []
-                current_length = sum(len(p) for p in current_chunk)
+            if stripped.startswith("### ") or stripped.startswith("## ") or stripped.startswith("# "):
+                if buffer:
+                    chunk_str = " ".join(buffer)
+                    chunks.append({
+                        "content": f"{current_heading}: {chunk_str}",
+                        "heading": current_heading,
+                        "snippet": chunk_str[:250] + ("..." if len(chunk_str) > 250 else "")
+                    })
+                    buffer = []
+                    buffer_len = 0
+                current_heading = stripped.lstrip("#").strip()
+                continue
 
-            current_chunk.append(para)
-            current_length += len(para)
+            buffer.append(stripped)
+            buffer_len += len(stripped)
 
-        if current_chunk:
-            chunks.append("\n\n".join(current_chunk))
+            if buffer_len >= max_chunk_chars:
+                chunk_str = " ".join(buffer)
+                chunks.append({
+                    "content": f"{current_heading}: {chunk_str}",
+                    "heading": current_heading,
+                    "snippet": chunk_str[:250] + ("..." if len(chunk_str) > 250 else "")
+                })
+                buffer = []
+                buffer_len = 0
+
+        if buffer:
+            chunk_str = " ".join(buffer)
+            chunks.append({
+                "content": f"{current_heading}: {chunk_str}",
+                "heading": current_heading,
+                "snippet": chunk_str[:250] + ("..." if len(chunk_str) > 250 else "")
+            })
 
         return chunks
 
@@ -179,12 +204,16 @@ class RAGManager:
             with open(file_path, "r", encoding="utf-8") as f:
                 content = f.read()
 
-            chunks = self.chunk_text(content)
-            if not chunks:
+            chunk_objs = self.chunk_text(content)
+            if not chunk_objs:
                 continue
 
-            ids = [f"{filename}_chunk_{i}" for i in range(len(chunks))]
-            metadatas = [{"source": filename, "chunk_index": i} for i in range(len(chunks))]
+            documents = [c["content"] for c in chunk_objs]
+            ids = [f"{filename}_chunk_{i}" for i in range(len(chunk_objs))]
+            metadatas = [
+                {"source": filename, "heading": c["heading"], "snippet": c["snippet"]}
+                for c in chunk_objs
+            ]
 
             try:
                 self.collection.delete(where={"source": filename})
@@ -193,7 +222,7 @@ class RAGManager:
 
             try:
                 self.collection.add(
-                    documents=chunks,
+                    documents=documents,
                     metadatas=metadatas,
                     ids=ids
                 )
@@ -203,21 +232,22 @@ class RAGManager:
                     self.chroma_client.delete_collection(self.collection_name)
                     self.collection = self.chroma_client.get_or_create_collection(
                         name=self.collection_name,
-                        embedding_function=self.embedding_fn
+                        embedding_function=self.embedding_fn,
+                        metadata={"hnsw:space": "cosine"}
                     )
                     self.collection.add(
-                        documents=chunks,
+                        documents=documents,
                         metadatas=metadatas,
                         ids=ids
                     )
                 else:
                     raise exc
 
-            await update_cache_fn(file_path, file_hash, len(chunks))
-            logger.info(f"Successfully indexed {len(chunks)} chunks from {filename}.")
+            await update_cache_fn(file_path, file_hash, len(chunk_objs))
+            logger.info(f"Successfully indexed {len(chunk_objs)} granular chunks from {filename}.")
 
     async def retrieve(
-        self, query: str, session_id: str, top_k: int = 5
+        self, query: str, session_id: str, top_k: int = 3
     ) -> List[RetrievedChunk]:
         """Asynchronously retrieve relevant knowledge chunks from ChromaDB for a given query.
 
@@ -235,7 +265,6 @@ class RAGManager:
         headers = settings.get_portkey_headers(session_id)
 
         try:
-            # Asynchronously compute query embedding
             res = await self.async_client.embeddings.create(
                 input=[query],
                 model=settings.EMBEDDING_MODEL_NAME,
@@ -259,7 +288,9 @@ class RAGManager:
                 retrieved.append(RetrievedChunk(
                     content=doc,
                     source=meta.get("source", "unknown"),
-                    score=max(score, 0.0)
+                    score=max(score, 0.0),
+                    heading=meta.get("heading", ""),
+                    snippet_text=meta.get("snippet", doc[:200])
                 ))
 
             return retrieved
