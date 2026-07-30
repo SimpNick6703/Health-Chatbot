@@ -56,6 +56,15 @@ async def process_query(session_id: str, user_message: str) -> AsyncGenerator[Di
     Yields:
         Dictionary objects representing SSE events (event, data).
     """
+    # 0. Auto-title session if default
+    try:
+        sess_info = await session_store.get_session(session_id)
+        if sess_info and (not sess_info.get("title") or sess_info.get("title") == "New Chat"):
+            auto_title = user_message.strip()[:35] + ("..." if len(user_message.strip()) > 35 else "")
+            await session_store.update_session_title(session_id, auto_title)
+    except Exception as exc:
+        logger.error(f"Auto-titling failed for session {session_id}: {exc}")
+
     # 1. PII Redaction
     cleaned_text, had_pii, pii_details = pii_detector.detect_and_redact(user_message)
     if had_pii:

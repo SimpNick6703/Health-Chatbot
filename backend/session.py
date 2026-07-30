@@ -21,7 +21,7 @@ class SessionStore:
         self.db_path: str = db_path or settings.SQLITE_PATH
 
     async def init_db(self) -> None:
-        """Create database tables if they do not already exist."""
+        """Create database tables if they do not already exist and run schema migrations."""
         db_dir = os.path.dirname(self.db_path)
         if db_dir:
             os.makedirs(db_dir, exist_ok=True)
@@ -30,6 +30,7 @@ class SessionStore:
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS sessions (
                     session_id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL DEFAULT 'New Chat',
                     created_at TEXT NOT NULL,
                     last_active_at TEXT NOT NULL,
                     is_archived INTEGER DEFAULT 0,
@@ -59,11 +60,22 @@ class SessionStore:
                     chunk_count INTEGER DEFAULT 0
                 )
             """)
+
+            # Schema migration check: Ensure title column exists in sessions table
+            async with db.execute("PRAGMA table_info(sessions)") as cursor:
+                columns = [row[1] for row in await cursor.fetchall()]
+                if "title" not in columns:
+                    logger.info("Migrating sessions table: adding 'title' column...")
+                    await db.execute("ALTER TABLE sessions ADD COLUMN title TEXT DEFAULT 'New Chat'")
+
             await db.commit()
             logger.info("Database schema initialized successfully.")
 
-    async def create_session(self) -> str:
+    async def create_session(self, title: str = "New Chat") -> str:
         """Create a new chat session and store in database.
+
+        Args:
+            title: Initial session title string.
 
         Returns:
             Newly generated session_id UUID string.
@@ -73,20 +85,88 @@ class SessionStore:
 
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(
-                "INSERT INTO sessions (session_id, created_at, last_active_at, is_archived) VALUES (?, ?, ?, 0)",
-                (session_id, now, now)
+                "INSERT INTO sessions (session_id, title, created_at, last_active_at, is_archived) VALUES (?, ?, ?, ?, 0)",
+                (session_id, title, now, now)
             )
             await db.commit()
 
-        logger.info(f"Created new chat session: {session_id}")
+        logger.info(f"Created new chat session: {session_id} ('{title}')")
         return session_id
+
+    async def list_active_sessions(self) -> List[Dict[str, Any]]:
+        """Retrieve all active (non-archived) sessions ordered by last_active_at DESC.
+
+        Returns:
+            List of session dicts containing session_id, title, created_at, last_active_at.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(
+                """
+                SELECT session_id, title, created_at, last_active_at FROM sessions
+                WHERE is_archived = 0
+                ORDER BY last_active_at DESC
+                """
+            ) as cursor:
+                rows = await cursor.fetchall()
+
+        return [
+            {
+                "session_id": row[0],
+                "title": row[1] or "New Chat",
+                "created_at": row[2],
+                "last_active_at": row[3]
+            } for row in rows
+        ]
+
+    async def update_session_title(self, session_id: str, title: str) -> bool:
+        """Update session title.
+
+        Args:
+            session_id: Target session ID.
+            title: New title text.
+
+        Returns:
+            True if session existed and was updated.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(
+                "UPDATE sessions SET title = ? WHERE session_id = ?",
+                (title.strip(), session_id)
+            )
+            await db.commit()
+            return cursor.rowcount > 0
+
+    async def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch session metadata by session ID.
+
+        Args:
+            session_id: Target session ID.
+
+        Returns:
+            Session dict or None if not found.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(
+                "SELECT session_id, title, created_at, last_active_at, is_archived FROM sessions WHERE session_id = ?",
+                (session_id,)
+            ) as cursor:
+                row = await cursor.fetchone()
+                if not row:
+                    return None
+                return {
+                    "session_id": row[0],
+                    "title": row[1],
+                    "created_at": row[2],
+                    "last_active_at": row[3],
+                    "is_archived": row[4]
+                }
 
     async def get_history(self, session_id: str, limit: int = 6) -> List[Dict[str, str]]:
         """Retrieve recent conversation turn history for LLM context window.
 
         Args:
             session_id: Target chat session ID.
-            limit: Maximum number of recent messages to return.
+            limit: Maximum number of recent message turns to return.
 
         Returns:
             List of message dicts formatted as [{'role': 'user/assistant', 'content': ...}].
@@ -102,9 +182,40 @@ class SessionStore:
             ) as cursor:
                 rows = await cursor.fetchall()
 
-        # Reverse to return in chronological order
         history = [{"role": row[0], "content": row[1]} for row in reversed(rows)]
         return history
+
+    async def get_full_history(self, session_id: str) -> List[Dict[str, Any]]:
+        """Retrieve complete detailed message history for session UI rendering.
+
+        Args:
+            session_id: Target chat session ID.
+
+        Returns:
+            List of message dicts with role, content, sources, is_hallucinated, created_at.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(
+                """
+                SELECT role, content, sources, is_hallucinated, created_at FROM messages
+                WHERE session_id = ?
+                ORDER BY id ASC
+                """,
+                (session_id,)
+            ) as cursor:
+                rows = await cursor.fetchall()
+
+        messages = []
+        for row in rows:
+            sources_list = json.loads(row[2]) if row[2] else []
+            messages.append({
+                "role": row[0],
+                "content": row[1],
+                "sources": sources_list,
+                "is_hallucinated": bool(row[3]),
+                "created_at": row[4]
+            })
+        return messages
 
     async def save_turn(
         self,

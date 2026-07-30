@@ -3,14 +3,14 @@
 import os
 import logging
 from contextlib import asynccontextmanager
-from typing import Dict, Any, AsyncGenerator
+from typing import Dict, Any, AsyncGenerator, Optional
 
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 
 from config import settings
-from models import ChatRequest, SessionResponse
+from models import ChatRequest, SessionResponse, SessionListResponse, SessionItem, UpdateSessionRequest
 from session import session_store
 from rag import rag_manager
 from router import process_query
@@ -43,7 +43,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 app = FastAPI(
     title="Healthcare AI Chatbot API",
-    description="FastAPI backend for Healthcare AI Chatbot with RAG and Guardrails",
+    description="FastAPI backend for Healthcare AI Chatbot with RAG, Guardrails, and Session Management",
     version="1.0.0",
     lifespan=lifespan
 )
@@ -64,32 +64,53 @@ async def health_check() -> Dict[str, str]:
     return {"status": "healthy"}
 
 
+@app.get("/api/sessions", response_model=SessionListResponse, status_code=status.HTTP_200_OK)
+async def list_sessions() -> SessionListResponse:
+    """Retrieve list of all active (non-archived) chat sessions."""
+    sessions = await session_store.list_active_sessions()
+    items = [SessionItem(**s) for s in sessions]
+    return SessionListResponse(sessions=items)
+
+
 @app.post("/api/session", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
-async def create_session() -> SessionResponse:
-    """Create a new chat session."""
-    session_id = await session_store.create_session()
+async def create_session(request: Optional[UpdateSessionRequest] = None) -> SessionResponse:
+    """Create a new chat session with an optional custom title."""
+    title = request.title if request and request.title else "New Chat"
+    session_id = await session_store.create_session(title=title)
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc).isoformat()
-    return SessionResponse(session_id=session_id, created_at=now)
+    return SessionResponse(session_id=session_id, title=title, created_at=now)
+
+
+@app.patch("/api/session/{session_id}", status_code=status.HTTP_200_OK)
+async def update_session_title(session_id: str, request: UpdateSessionRequest) -> Dict[str, str]:
+    """Rename or update session title."""
+    updated = await session_store.update_session_title(session_id, request.title)
+    if not updated:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session {session_id} not found."
+        )
+    return {"status": "updated", "session_id": session_id, "title": request.title}
 
 
 @app.delete("/api/session/{session_id}", status_code=status.HTTP_200_OK)
 async def delete_session(session_id: str) -> Dict[str, str]:
-    """Delete a chat session and purge all stored messages."""
+    """Archive a chat session."""
     deleted = await session_store.delete_session(session_id)
     if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Session {session_id} not found."
         )
-    return {"status": "deleted", "session_id": session_id}
+    return {"status": "archived", "session_id": session_id}
 
 
 @app.get("/api/session/{session_id}/history", status_code=status.HTTP_200_OK)
 async def get_session_history(session_id: str) -> Dict[str, Any]:
-    """Retrieve turn history for a session."""
-    history = await session_store.get_history(session_id, limit=settings.SESSION_MAX_TURNS)
-    return {"session_id": session_id, "history": history}
+    """Retrieve full message turn history for a session."""
+    history = await session_store.get_full_history(session_id)
+    return {"session_id": session_id, "messages": history}
 
 
 @app.post("/api/chat")

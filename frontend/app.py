@@ -3,6 +3,7 @@
 import os
 import json
 import logging
+from typing import List, Dict, Any
 import streamlit as st
 import httpx
 from httpx_sse import connect_sse
@@ -65,29 +66,63 @@ st.markdown("""
         color: #cbd5e1;
         line-height: 1.4;
     }
+    div[data-testid="stSidebar"] button {
+        text-align: left;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 
-def get_new_session_id() -> str:
-    """Request a new session ID from backend API.
+def fetch_active_sessions() -> List[Dict[str, Any]]:
+    """Fetch active chat sessions list from backend API.
 
     Returns:
-        Session ID string or fallback local UUID string.
+        List of session objects.
     """
     try:
-        resp = httpx.post(f"{BACKEND_URL}/api/session", timeout=5.0)
+        resp = httpx.get(f"{BACKEND_URL}/api/sessions", timeout=4.0)
+        if resp.status_code == 200:
+            return resp.json().get("sessions", [])
+    except Exception as exc:
+        logger.error(f"Failed to fetch sessions from backend: {exc}")
+    return []
+
+
+def create_new_remote_session(title: str = "New Chat") -> str:
+    """Create a new session on the backend.
+
+    Args:
+        title: Title string.
+
+    Returns:
+        New session ID.
+    """
+    try:
+        resp = httpx.post(f"{BACKEND_URL}/api/session", json={"title": title}, timeout=5.0)
         if resp.status_code == 201:
             return resp.json()["session_id"]
     except Exception as exc:
-        logger.error(f"Failed to fetch session ID from backend: {exc}")
+        logger.error(f"Failed to create new session: {exc}")
 
     import uuid
     return str(uuid.uuid4())
 
 
-def delete_remote_session(session_id: str) -> None:
-    """Send request to backend to archive session history.
+def rename_remote_session(session_id: str, new_title: str) -> None:
+    """Send patch request to rename session title.
+
+    Args:
+        session_id: Session ID.
+        new_title: New title string.
+    """
+    try:
+        httpx.patch(f"{BACKEND_URL}/api/session/{session_id}", json={"title": new_title}, timeout=5.0)
+    except Exception as exc:
+        logger.error(f"Failed to rename session {session_id}: {exc}")
+
+
+def archive_remote_session(session_id: str) -> None:
+    """Archive a chat session on backend.
 
     Args:
         session_id: Session ID to archive.
@@ -95,7 +130,34 @@ def delete_remote_session(session_id: str) -> None:
     try:
         httpx.delete(f"{BACKEND_URL}/api/session/{session_id}", timeout=5.0)
     except Exception as exc:
-        logger.error(f"Failed to archive remote session {session_id}: {exc}")
+        logger.error(f"Failed to archive session {session_id}: {exc}")
+
+
+def fetch_remote_history(session_id: str) -> List[Dict[str, Any]]:
+    """Fetch full message history for a session from backend API.
+
+    Args:
+        session_id: Target session ID.
+
+    Returns:
+        List of message dicts.
+    """
+    try:
+        resp = httpx.get(f"{BACKEND_URL}/api/session/{session_id}/history", timeout=5.0)
+        if resp.status_code == 200:
+            raw_messages = resp.json().get("messages", [])
+            messages = []
+            for m in raw_messages:
+                msg_dict = {
+                    "role": m.get("role"),
+                    "content": m.get("content"),
+                    "is_hallucinated": m.get("is_hallucinated", False)
+                }
+                messages.append(msg_dict)
+            return messages
+    except Exception as exc:
+        logger.error(f"Failed to fetch history for session {session_id}: {exc}")
+    return []
 
 
 def render_citations_ui(citations: list) -> None:
@@ -129,17 +191,20 @@ def render_citations_ui(citations: list) -> None:
                     st.caption(f"*Excerpt:* {snippet}")
 
 
-# Initialize Session State
+# Initialize Session State Variables
 if "session_id" not in st.session_state:
-    st.session_state.session_id = get_new_session_id()
+    st.session_state.session_id = create_new_remote_session()
 
 if "messages" not in st.session_state:
-    st.session_state.messages = []
+    st.session_state.messages = fetch_remote_history(st.session_state.session_id)
+
+if "editing_title" not in st.session_state:
+    st.session_state.editing_title = False
 
 if "pending_prompt" not in st.session_state:
     st.session_state.pending_prompt = None
 
-# Sidebar UI
+# Sidebar UI & Session Management
 with st.sidebar:
     st.title("🏥 Healthcare AI")
     st.caption("Tool-Augmented Health Assistant & Guardrail System")
@@ -147,18 +212,77 @@ with st.sidebar:
     st.markdown("---")
 
     if st.button("➕ Start New Chat", use_container_width=True):
-        if st.session_state.session_id:
-            delete_remote_session(st.session_state.session_id)
-        st.session_state.session_id = get_new_session_id()
+        new_id = create_new_remote_session("New Chat")
+        st.session_state.session_id = new_id
         st.session_state.messages = []
+        st.session_state.editing_title = False
         st.session_state.pending_prompt = None
         st.rerun()
 
+    st.markdown("---")
+    st.markdown("### 💬 Chat History")
+
+    active_sessions = fetch_active_sessions()
+
+    if active_sessions:
+        for s in active_sessions:
+            s_id = s["session_id"]
+            s_title = s["title"] or "Untitled Chat"
+            is_active = (s_id == st.session_state.session_id)
+
+            col1, col2 = st.columns([5, 1])
+
+            with col1:
+                label = f"👉 {s_title}" if is_active else f"💬 {s_title}"
+                if st.button(label, key=f"sess_btn_{s_id}", use_container_width=True):
+                    if s_id != st.session_state.session_id:
+                        st.session_state.session_id = s_id
+                        st.session_state.messages = fetch_remote_history(s_id)
+                        st.session_state.editing_title = False
+                        st.session_state.pending_prompt = None
+                        st.rerun()
+
+            with col2:
+                if st.button("🗑️", key=f"del_btn_{s_id}"):
+                    archive_remote_session(s_id)
+                    if s_id == st.session_state.session_id:
+                        st.session_state.session_id = create_new_remote_session()
+                        st.session_state.messages = []
+                    st.rerun()
+    else:
+        st.caption("No past sessions found.")
+
+    st.markdown("---")
+
+    # Rename Current Session UI
+    active_sess_obj = next((s for s in active_sessions if s["session_id"] == st.session_state.session_id), None)
+    active_title = active_sess_obj["title"] if active_sess_obj else "New Chat"
+
+    st.markdown(f"**Current Chat:** `{active_title}`")
+    if not st.session_state.editing_title:
+        if st.button("✏️ Rename Chat", use_container_width=True):
+            st.session_state.editing_title = True
+            st.rerun()
+    else:
+        new_title_input = st.text_input("New title:", value=active_title, key="new_title_input")
+        col_save, col_cancel = st.columns(2)
+        with col_save:
+            if st.button("Save"):
+                if new_title_input.strip():
+                    rename_remote_session(st.session_state.session_id, new_title_input.strip())
+                st.session_state.editing_title = False
+                st.rerun()
+        with col_cancel:
+            if st.button("Cancel"):
+                st.session_state.editing_title = False
+                st.rerun()
+
+    st.markdown("---")
     st.markdown("### Sample Prompts")
     st.caption("Tap a button below for instant quick queries:")
 
     sample_prompts = {
-        "🤒 Symptoms": "What should I do to care for a fever and when should I see a doctor?",
+        "信 Symptoms": "What should I do to care for a fever and when should I see a doctor?",
         "🫁 Asthma": "What is asthma, what causes it, and how is it managed?",
         "🩺 Conditions": "What are common symptoms and risk factors of Type 2 Diabetes?",
         "🏃 Lifestyle": "What are recommended sleep hygiene guidelines for adults?",
@@ -169,9 +293,6 @@ with st.sidebar:
     for label, prompt in sample_prompts.items():
         if st.button(label, use_container_width=True):
             st.session_state.pending_prompt = prompt
-
-    st.markdown("---")
-    st.caption(f"**Session ID:** `{st.session_state.session_id[:8]}...`")
 
 
 # Main UI Header

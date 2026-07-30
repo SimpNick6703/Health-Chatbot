@@ -15,7 +15,29 @@ class SessionResponse(BaseModel):
     """Response payload when creating a new session."""
 
     session_id: str = Field(..., description="Newly created session identifier.")
+    title: str = Field(default="New Chat", description="Session title.")
     created_at: str = Field(..., description="ISO 8601 creation timestamp.")
+
+
+class UpdateSessionRequest(BaseModel):
+    """Request payload for updating session metadata."""
+
+    title: str = Field(..., description="New session title.")
+
+
+class SessionItem(BaseModel):
+    """Model representing a single chat session item in listing."""
+
+    session_id: str = Field(..., description="Session identifier.")
+    title: str = Field(..., description="Session title.")
+    created_at: str = Field(..., description="ISO 8601 creation timestamp.")
+    last_active_at: str = Field(..., description="ISO 8601 last active timestamp.")
+
+
+class SessionListResponse(BaseModel):
+    """Response payload for listing sessions."""
+
+    sessions: List[SessionItem] = Field(default_factory=list, description="List of active chat sessions.")
 
 
 class RetrievedChunk(BaseModel):
