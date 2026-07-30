@@ -1,6 +1,6 @@
 # Query Processing & Safety Logic Documentation
 
-This document explains the end-to-end query processing pipeline, multi-layer guardrail design, tool-calling (function calling) architecture, prompt engineering strategy, and security verification approach.
+This document explains the end-to-end query processing pipeline, multi-layer guardrail design, tool-calling (function calling) architecture, session management strategy, and security verification approach.
 
 ---
 
@@ -58,8 +58,8 @@ Instead of pre-retrieval prompt stuffing, the LLM receives JSON Schema tool spec
 - **Execution**: Async LLM-as-a-Judge NLI entailment evaluation checking sentence factual support against retrieved tool snippets.
 - **Collapsed Hallucination Response UX**:
   - If `is_hallucinated == True`, the generated response is **not deleted**.
-  - The UI displays a warning banner (`⚠️ Potential hallucination or unverified claim detected.`) and wraps the response inside a collapsed container:
-    `st.expander("⚠️ View unverified response (Use with caution)")`
+  - The UI renders a warning banner (`Warning: Potential hallucination or unverified claim detected.`) and wraps the response inside a collapsed container:
+    `st.expander("View unverified response (Use with caution)")`
   - Accompanied by advice: *"This response could not be fully verified against official medical knowledge sources. Please consult a licensed healthcare provider."*
 
 ---
@@ -84,7 +84,23 @@ Across all backend components:
 
 ---
 
-## 4. Security & Red-Team Testing Strategy
+## 4. Multi-Session Management & Auditability
+
+To maintain full auditability while providing seamless UI chat session switching:
+1. **Lazy Session Creation**:
+   - Page load or clicking "+ Start New Chat" generates a client UUID without creating empty records in SQLite.
+   - The session row is created automatically on execution of the first message turn.
+2. **Auto-Titling & Title Editing**:
+   - The query router inspects initial session turns and auto-populates `title` from the query topic string.
+   - Users can update session titles via `PATCH /api/session/{session_id}`.
+3. **Inner Join Query Filter**:
+   - `list_active_sessions` executes an `INNER JOIN` against `messages`, strictly excluding 0-message sessions from the Chat History navigation list.
+4. **Soft Deletion / Archiving**:
+   - Deleting a chat sets `is_archived = 1` and `archived_at = <ISO_TIMESTAMP>` in SQLite `sessions`, keeping historical turns available for audit against Portkey observability traces.
+
+---
+
+## 5. Security & Red-Team Testing Strategy
 
 The test suite in `backend/tests/test_guardrails.py` uses test payloads adapted from security test suites (`prompt_injection.json`, `jailbreak.json`, `data_exfiltration.json`, `harmful_content.json`).
 
