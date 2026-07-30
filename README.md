@@ -1,6 +1,6 @@
 # Healthcare AI Chatbot
 
-A high-performance healthcare chatbot providing general health Q&A, RAG grounding against verified public-domain medical knowledge bases (MedlinePlus & WHO), streaming token responses, and multi-layer guardrails (PII redaction, intent classification, input moderation, and LLM-as-a-Judge hallucination verification).
+A high-performance healthcare chatbot providing general health Q&A, OpenAI Tool-Calling (Function Calling) against verified public-domain medical knowledge bases (MedlinePlus & WHO), live MedlinePlus Developer Web Services API integration, streaming token responses, and multi-layer guardrails (PII redaction, intent classification, input moderation, and LLM-as-a-Judge hallucination verification).
 
 *Shared for evaluation only, all rights reserved.*
 
@@ -8,18 +8,28 @@ A high-performance healthcare chatbot providing general health Q&A, RAG groundin
 
 ## Features
 
+- **Tool-Calling Architecture (Function Calling)**:
+  - **`search_knowledge_base`**: Dynamic vector search over granular ~300-character local knowledge passages using Google AI Studio Gemini Embeddings (`gemini-embedding-2-preview`) in cosine distance space.
+  - **`search_medlineplus_api`**: Live search against the official NIH / MedlinePlus Developer Web Services API (`https://wsearch.nlm.nih.gov/ws/query?db=healthTopics&term={term}`) returning structured government health topic guides and official URLs.
+  - **Performance**: Selective tool invocation avoids prompt bloat and delivers fast Time-To-First-Token (TTFT). Direct queries (greetings, emergency refusals) bypass tools entirely for instant (< 1s) responses.
 - **Multi-Layer Safety Guardrails**:
   - **PII Redaction**: Regex-based redaction of emails, phone numbers, Aadhaar, PAN, IP addresses, and vehicle numbers.
   - **Deterministic Intent Classification**: Instant local redirection for emergency symptoms and refusal of diagnostic/prescription queries.
   - **Input Moderation**: Async API safety checks with domain-specific ignored categories (`health`, `pii`).
-  - **Hallucination Verification**: Post-generation LLM-as-a-Judge NLI evaluation checking sentence entailment against retrieved RAG chunks before final response approval.
-- **RAG Grounding & Ingestion Caching**:
-  - Embedded via Google AI Studio Gemini Embeddings (`gemini-embedding-2-preview`).
+  - **Hallucination Verification**: Post-generation LLM-as-a-Judge NLI evaluation checking sentence entailment against retrieved tool snippets before final response approval.
+- **Collapsed Hallucination Response UX**:
+  - If flagged by the Hallucination Detector, the generated response is **not deleted**.
+  - The UI renders a warning banner (`⚠️ Potential hallucination or unverified claim detected.`) and wraps the response inside a collapsed container:
+    `st.expander("⚠️ View unverified response (Use with caution)")`
+- **Granular Ingestion & Content Caching**:
   - SHA-256 content hash caching in SQLite (`knowledge_cache`) to avoid redundant re-embedding API calls and honor developer rate limits.
-- **Portkey Observability**: Injects `user=session_id` and custom header `x-portkey-metadata: {"_user": "<session_id>", "environment": "<ENVIRONMENT>"}` across all API clients.
-- **Streamlit Frontend**:
+- **Portkey Observability**: Injects `user=session_id` and custom header `x-portkey-metadata: {"_user": "<session_id>"}` across all LLM, embedding, and moderation clients.
+- **Streamlit Dark Theme Frontend**:
   - Token-by-token SSE streaming.
-  - Live status indicator widget (`Checking for hallucination...` -> Green tick `✔` or Red cross `✖`).
+  - Live status indicator widget (`⚡ Querying knowledge tools...` -> `✔ Factually verified`).
+  - **Horizontal Flexbox Citations**: Side-by-side citation cards.
+  - **Clickable MedlinePlus Hyperlinks**: Direct links to `medlineplus.gov` opening in a new tab.
+  - **Exact Chunk Excerpts**: Local KB citations display the exact text snippet retrieved.
   - One-tap "New Chat" session purge button.
   - Persistent medical disclaimer banner.
 
@@ -76,7 +86,7 @@ Access the web interface at `http://localhost:8501`.
 ## Example Queries by Topic
 
 1. **Common Symptoms**: *"What should I do to care for a fever at home, and when should I see a doctor?"*
-2. **General Diseases**: *"What are common symptoms and risk factors of Type 2 Diabetes?"*
+2. **General Diseases**: *"What is asthma, what causes it, and how is it managed?"*
 3. **Healthy Lifestyle**: *"What are recommended sleep hygiene guidelines for adults?"*
 4. **Nutrition & Diet**: *"How much daily sodium intake is recommended for heart health?"*
 5. **Preventive Healthcare**: *"How often should adults get blood pressure and cholesterol screenings?"*
@@ -91,16 +101,6 @@ To run the guardrail and security red-team test suite:
 ```bash
 cd backend
 pytest tests/test_guardrails.py -v
-```
-
----
-
-## Deployment via SSH
-
-To redeploy on a remote server (`HP-AIO`), execute the included PowerShell deployment script:
-
-```powershell
-.\deploy.ps1
 ```
 
 ---

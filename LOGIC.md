@@ -1,19 +1,23 @@
 # Query Processing & Safety Logic Documentation
 
-This document explains the end-to-end query processing pipeline, multi-layer guardrail design, prompt engineering strategy, and security verification approach.
+This document explains the end-to-end query processing pipeline, multi-layer guardrail design, tool-calling (function calling) architecture, prompt engineering strategy, and security verification approach.
 
 ---
 
-## 1. Multi-Layer Guardrail Architecture
+## 1. Multi-Layer Guardrail & Tool-Calling Architecture
 
 ```mermaid
-flowchart LR
+flowchart TD
     A[Raw Query] --> B[1. PII Redactor]
     B --> C[2. Intent Classifier]
     C --> D[3. Input Moderation]
-    D --> E[4. RAG & LLM Generation]
-    E --> F[5. Hallucination Detector]
-    F --> G[6. Final Verified Output]
+    D --> E[4. LLM Tool Selection Round]
+    E -->|Tool Call Requested| F[5. Tool Execution: search_knowledge_base / search_medlineplus_api]
+    F --> G[6. Streaming LLM Final Answer]
+    E -->|Direct Response| G
+    G --> H[7. Hallucination Detector]
+    H -->|Factually Verified| I[8. Stream Done + Structured Citations]
+    H -->|Unverified / Flagged| J[8. Collapsed Hallucination Warning UX]
 ```
 
 ### Stage 1: PII Redaction (`PIIDetector`)
@@ -30,37 +34,51 @@ flowchart LR
 ### Stage 2: Intent Classifier (`IntentClassifier`)
 - **Execution**: Fast deterministic keyword matching.
 - **Categories**:
-  - **Emergency**: Triggers immediate redirect to 911 / 112 emergency service instructions.
+  - **Emergency**: Triggers immediate redirect to emergency service instructions (911 / 112).
   - **Diagnosis & Prescription**: Triggers structured refusal directing user to a licensed healthcare practitioner.
-  - **Safe**: Passes to moderation and RAG processing.
+  - **Safe**: Passes to moderation and processing pipeline.
 
 ### Stage 3: Input Moderation (`InputModerator`)
 - **Execution**: Async `httpx` POST to external moderation API (`mistral-moderation-latest`).
-- **Ignored Categories**: `{"health", "pii"}` (since health queries naturally discuss body symptoms).
+- **Ignored Categories**: `{"health", "pii"}` (since medical questions naturally discuss body symptoms).
 - **Enforced Categories**: `sexual`, `violence_and_threats`, `selfharm`, `hate_and_discrimination`, `dangerous`, `criminal`, `jailbreaking`.
-- **Portkey Metadata**: Passes `x-portkey-metadata` header containing `_user` and `environment`.
+- **Portkey Metadata**: Passes `x-portkey-metadata` header containing `{"_user": "<session_id>"}`.
 
-### Stage 4: Hallucination Detector (`HallucinationDetector`)
-- **Execution**: Post-generation LLM-as-a-Judge NLI entailment verification.
-- **Prompt Logic**: Evaluates whether all sentences in the generated LLM response are factually supported by the retrieved RAG context passages.
-- **Interruption Behavior**: If `is_hallucinated == True`, stream is aborted, tokens are discarded on the client, and an error message (`"Hallucination detected, response discarded..."`) is rendered.
+### Stage 4: OpenAI Tool Selection & Execution (`tools.py`)
+Instead of pre-retrieval prompt stuffing, the LLM receives JSON Schema tool specifications:
+1. `search_knowledge_base`: Queries ChromaDB vector database over granular ~300-character passages using Gemini Embeddings (`gemini-embedding-2-preview`) in cosine distance space.
+2. `search_medlineplus_api`: Queries the official NIH / MedlinePlus Developer Web Services API (`https://wsearch.nlm.nih.gov/ws/query?db=healthTopics&term={term}`) for live health topic summaries and official government URLs.
+- **Execution**: If the model decides information is required, it returns `tool_calls`. The backend executes tool calls asynchronously, extracts `CitationItem` objects with exact snippet excerpts and direct URLs, and feeds tool response messages back into context.
+
+### Stage 5: Streaming Response Generation & Disclaimer
+- Streams token-by-token text to the client via Server-Sent Events (SSE).
+- Direct queries (greetings, emergency refusals) bypass tools entirely for instant (< 1s) responses.
+
+### Stage 6: Hallucination Detector (`HallucinationDetector`) & Collapsed UX
+- **Execution**: Async LLM-as-a-Judge NLI entailment evaluation checking sentence factual support against retrieved tool snippets.
+- **Collapsed Hallucination Response UX**:
+  - If `is_hallucinated == True`, the generated response is **not deleted**.
+  - The UI displays a warning banner (`⚠️ Potential hallucination or unverified claim detected.`) and wraps the response inside a collapsed container:
+    `st.expander("⚠️ View unverified response (Use with caution)")`
+  - Accompanied by advice: *"This response could not be fully verified against official medical knowledge sources. Please consult a licensed healthcare provider."*
 
 ---
 
-## 2. Ingestion & Content Caching Logic
+## 2. Granular Ingestion & Content Caching Logic
 
-To satisfy developer web service guidelines (MedlinePlus / NLM) and prevent redundant API calls:
-1. When starting up, `rag_manager.ingest_knowledge_files` computes the SHA-256 hash of each file in `backend/knowledge/`.
-2. Hashing is compared against the SQLite `knowledge_cache` table.
+To satisfy developer web service guidelines (MedlinePlus / NLM) and optimize retrieval speed:
+1. On startup, `rag_manager.ingest_knowledge_files` computes the SHA-256 hash of each file in `backend/knowledge/`.
+2. Hashing is checked against the SQLite `knowledge_cache` table.
 3. If content hash matches, ingestion skips re-embedding.
-4. If changed or new, content is split into ~400-token passages, embedded via `gemini-embedding-2-preview`, updated in ChromaDB, and stored in `knowledge_cache`.
+4. If changed or new, Markdown files are split into granular ~300-character (~50 word) passages on section (`###`) and bullet boundaries.
+5. Passages are embedded via `gemini-embedding-2-preview`, indexed in ChromaDB with heading/snippet metadata, and updated in `knowledge_cache`.
 
 ---
 
 ## 3. Portkey Observability Integration
 
 Across all backend components:
-- `llm_client.py`: Chat completions pass `user=session_id` and header `x-portkey-metadata: {"_user": "<session_id>", "environment": "<ENVIRONMENT>"}`.
+- `llm_client.py`: Chat completions pass `user=session_id` and header `x-portkey-metadata: {"_user": "<session_id>"}`.
 - `guardrails.py`: Moderation and Judge LLM requests include the same metadata headers.
 - `rag.py`: Embedding requests include user and metadata headers.
 
