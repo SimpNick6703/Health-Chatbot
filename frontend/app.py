@@ -19,26 +19,23 @@ st.set_page_config(
     layout="wide"
 )
 
-# Custom CSS styling for polished presentation
+# Custom CSS styling for dark theme presentation
 st.markdown("""
 <style>
-    .stAppViewContainer {
-        background-color: #f8fafc;
-    }
     .disclaimer-banner {
-        background-color: #fef3c7;
+        background-color: rgba(245, 158, 11, 0.12);
         border-left: 4px solid #f59e0b;
         padding: 12px 16px;
-        border-radius: 4px;
-        color: #92400e;
+        border-radius: 6px;
+        color: #fef08a;
         font-weight: 500;
         margin-bottom: 20px;
     }
     .source-tag {
         display: inline-block;
-        background-color: #e0f2fe;
-        color: #0369a1;
-        padding: 2px 8px;
+        background-color: #0369a1;
+        color: #e0f2fe;
+        padding: 3px 10px;
         border-radius: 12px;
         font-size: 0.82em;
         font-weight: 500;
