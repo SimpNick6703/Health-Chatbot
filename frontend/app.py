@@ -5,7 +5,7 @@ import json
 import logging
 import streamlit as st
 import httpx
-from httpx_sse import connect_httpx_sse
+from httpx_sse import connect_sse
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("frontend")
@@ -172,7 +172,7 @@ if user_prompt:
 
         try:
             with httpx.Client(timeout=60.0) as client:
-                with connect_httpx_sse(
+                with connect_sse(
                     client, "POST", f"{BACKEND_URL}/api/chat", json=payload
                 ) as event_source:
                     for sse in event_source.iter_sse():
