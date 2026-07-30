@@ -11,6 +11,8 @@ from rag import rag_manager
 from llm_client import llm_client
 from session import session_store
 
+from medlineplus import medlineplus_client
+
 logger = logging.getLogger(__name__)
 
 # Load system prompt at startup
@@ -110,9 +112,11 @@ async def process_query(session_id: str, user_message: str) -> AsyncGenerator[Di
         )
         return
 
-    # 4. RAG Retrieval
+    # 4. RAG Retrieval & MedlinePlus Web Service API Tool Integration
     chunks = await rag_manager.retrieve(cleaned_text, session_id, top_k=settings.RAG_TOP_K)
-    logger.info(f"Session {session_id}: Retrieved {len(chunks)} RAG chunks.")
+    medline_chunks = await medlineplus_client.search_health_topics(cleaned_text)
+    chunks.extend(medline_chunks)
+    logger.info(f"Session {session_id}: Combined {len(chunks)} context chunks (Local RAG + MedlinePlus API).")
 
     # 5. Build Conversation Context
     history = await session_store.get_history(session_id, limit=settings.SESSION_MAX_TURNS)

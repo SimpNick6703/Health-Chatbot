@@ -256,12 +256,11 @@ class RAGManager:
             retrieved: List[RetrievedChunk] = []
             for doc, meta, dist in zip(documents, metadatas, distances):
                 score = float(1.0 - dist) if dist is not None else 0.0
-                if score >= settings.RAG_SIMILARITY_THRESHOLD:
-                    retrieved.append(RetrievedChunk(
-                        content=doc,
-                        source=meta.get("source", "unknown"),
-                        score=score
-                    ))
+                retrieved.append(RetrievedChunk(
+                    content=doc,
+                    source=meta.get("source", "unknown"),
+                    score=max(score, 0.0)
+                ))
 
             return retrieved
         except Exception as exc:
