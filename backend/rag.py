@@ -38,9 +38,7 @@ class GeminiEmbeddingFunction(EmbeddingFunction):
         Returns:
             List of float vectors.
         """
-        if not input:
-            return []
-
+        headers = settings.get_portkey_headers(self.session_id)
         embeddings: Embeddings = []
         for text in input:
             try:
