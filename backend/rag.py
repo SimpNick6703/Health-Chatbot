@@ -41,19 +41,21 @@ class GeminiEmbeddingFunction(EmbeddingFunction):
         if not input:
             return []
 
-        headers = settings.get_portkey_headers(self.session_id)
+        embeddings: Embeddings = []
+        for text in input:
+            try:
+                res = self.client.embeddings.create(
+                    input=text,
+                    model=settings.EMBEDDING_MODEL_NAME,
+                    user=self.session_id,
+                    extra_headers=headers
+                )
+                embeddings.append(res.data[0].embedding)
+            except Exception as exc:
+                logger.error(f"Gemini embedding call failed for chunk: {exc}")
+                embeddings.append([0.0] * 3072)
 
-        try:
-            res = self.client.embeddings.create(
-                input=input,
-                model=settings.EMBEDDING_MODEL_NAME,
-                user=self.session_id,
-                extra_headers=headers
-            )
-            return [data.embedding for data in res.data]
-        except Exception as exc:
-            logger.error(f"Gemini embedding call failed: {exc}")
-            return [[0.0] * 3072 for _ in input]
+        return embeddings
 
 
 class RAGManager:
