@@ -16,11 +16,10 @@ BACKEND_URL: str = os.getenv("BACKEND_URL", "http://localhost:8000")
 # Page Config
 st.set_page_config(
     page_title="Healthcare AI Assistant",
-    page_icon="🏥",
     layout="wide"
 )
 
-# Custom CSS styling for dark theme presentation & horizontal citations
+# Custom CSS styling for dark theme presentation & aligned sidebar buttons
 st.markdown("""
 <style>
     .disclaimer-banner {
@@ -66,8 +65,26 @@ st.markdown("""
         color: #cbd5e1;
         line-height: 1.4;
     }
+    div[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"] {
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 4px;
+    }
     div[data-testid="stSidebar"] button {
         text-align: left;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    div[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"] > div:nth-child(2) button {
+        color: #f87171;
+        border-color: #7f1d1d;
+        text-align: center;
+        font-size: 0.82em;
+    }
+    div[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"] > div:nth-child(2) button:hover {
+        background-color: #7f1d1d;
+        color: #ffffff;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -169,7 +186,7 @@ def render_citations_ui(citations: list) -> None:
     if not citations:
         return
 
-    with st.expander("📚 Knowledge Base Citations & Excerpts", expanded=False):
+    with st.expander("Knowledge Base Citations & Excerpts", expanded=False):
         cols = st.columns(min(len(citations), 2))
         for idx, cit in enumerate(citations):
             col = cols[idx % len(cols)]
@@ -181,11 +198,11 @@ def render_citations_ui(citations: list) -> None:
 
                 if source_type == "medlineplus_api" and url:
                     st.markdown(
-                        f"🌐 **[MedlinePlus: {title}]({url})**",
+                        f"**[MedlinePlus: {title}]({url})**",
                         unsafe_allow_html=True
                     )
                 else:
-                    st.markdown(f"📄 **{title}**")
+                    st.markdown(f"**Source: {title}**")
 
                 if snippet:
                     st.caption(f"*Excerpt:* {snippet}")
@@ -206,12 +223,12 @@ if "pending_prompt" not in st.session_state:
 
 # Sidebar UI & Session Management
 with st.sidebar:
-    st.title("🏥 Healthcare AI")
+    st.title("Healthcare AI")
     st.caption("Tool-Augmented Health Assistant & Guardrail System")
 
     st.markdown("---")
 
-    if st.button("➕ Start New Chat", use_container_width=True):
+    if st.button("+ Start New Chat", use_container_width=True):
         new_id = create_new_remote_session("New Chat")
         st.session_state.session_id = new_id
         st.session_state.messages = []
@@ -220,7 +237,7 @@ with st.sidebar:
         st.rerun()
 
     st.markdown("---")
-    st.markdown("### 💬 Chat History")
+    st.markdown("### Chat History")
 
     active_sessions = fetch_active_sessions()
 
@@ -230,10 +247,10 @@ with st.sidebar:
             s_title = s["title"] or "Untitled Chat"
             is_active = (s_id == st.session_state.session_id)
 
-            col1, col2 = st.columns([5, 1])
+            col1, col2 = st.columns([3.8, 1.2])
 
             with col1:
-                label = f"👉 {s_title}" if is_active else f"💬 {s_title}"
+                label = f"[Active] {s_title}" if is_active else s_title
                 if st.button(label, key=f"sess_btn_{s_id}", use_container_width=True):
                     if s_id != st.session_state.session_id:
                         st.session_state.session_id = s_id
@@ -243,7 +260,7 @@ with st.sidebar:
                         st.rerun()
 
             with col2:
-                if st.button("🗑️", key=f"del_btn_{s_id}"):
+                if st.button("Delete", key=f"del_btn_{s_id}", use_container_width=True):
                     archive_remote_session(s_id)
                     if s_id == st.session_state.session_id:
                         st.session_state.session_id = create_new_remote_session()
@@ -258,9 +275,9 @@ with st.sidebar:
     active_sess_obj = next((s for s in active_sessions if s["session_id"] == st.session_state.session_id), None)
     active_title = active_sess_obj["title"] if active_sess_obj else "New Chat"
 
-    st.markdown(f"**Current Chat:** `{active_title}`")
+    st.markdown(f"**Active Session:** `{active_title}`")
     if not st.session_state.editing_title:
-        if st.button("✏️ Rename Chat", use_container_width=True):
+        if st.button("Rename Chat", use_container_width=True):
             st.session_state.editing_title = True
             st.rerun()
     else:
@@ -282,12 +299,12 @@ with st.sidebar:
     st.caption("Tap a button below for instant quick queries:")
 
     sample_prompts = {
-        "信 Symptoms": "What should I do to care for a fever and when should I see a doctor?",
-        "🫁 Asthma": "What is asthma, what causes it, and how is it managed?",
-        "🩺 Conditions": "What are common symptoms and risk factors of Type 2 Diabetes?",
-        "🏃 Lifestyle": "What are recommended sleep hygiene guidelines for adults?",
-        "🥗 Nutrition": "How much sodium per day is recommended for heart health?",
-        "🩹 First Aid": "How should I treat a minor first-degree burn at home?"
+        "Fever Care": "What should I do to care for a fever and when should I see a doctor?",
+        "Asthma Overview": "What is asthma, what causes it, and how is it managed?",
+        "Diabetes Conditions": "What are common symptoms and risk factors of Type 2 Diabetes?",
+        "Sleep Hygiene": "What are recommended sleep hygiene guidelines for adults?",
+        "Sodium & Nutrition": "How much sodium per day is recommended for heart health?",
+        "First Aid Burns": "How should I treat a minor first-degree burn at home?"
     }
 
     for label, prompt in sample_prompts.items():
@@ -301,7 +318,7 @@ st.title("Healthcare Information Assistant")
 # Persistent Medical Disclaimer Banner
 st.markdown(
     '<div class="disclaimer-banner">'
-    '⚠️ <strong>Notice:</strong> This is for informational purposes only. For medical advice or diagnosis, consult a professional.'
+    '<strong>Notice:</strong> This is for informational purposes only. For medical advice or diagnosis, consult a professional.'
     '</div>',
     unsafe_allow_html=True
 )
@@ -310,8 +327,8 @@ st.markdown(
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         if msg.get("is_hallucinated"):
-            st.warning("⚠️ Potential hallucination or unverified claim detected.")
-            with st.expander("⚠️ View unverified response (Use with caution)", expanded=False):
+            st.warning("Warning: Potential hallucination or unverified claim detected.")
+            with st.expander("View unverified response (Use with caution)", expanded=False):
                 st.markdown(msg["content"])
         else:
             st.markdown(msg["content"])
@@ -366,11 +383,11 @@ if user_prompt:
                         elif event_type == "status":
                             stage = data.get("stage", "")
                             if stage == "executing_tools":
-                                status_placeholder.info("⚡ Querying knowledge tools & MedlinePlus API...")
+                                status_placeholder.info("Querying knowledge tools & MedlinePlus API...")
                             elif stage == "checking_hallucination":
-                                status_placeholder.info("🔍 Verifying response factual consistency...")
+                                status_placeholder.info("Verifying response factual consistency...")
                             elif stage == "verified":
-                                status_placeholder.success("✔ Factually verified against knowledge base.")
+                                status_placeholder.success("Factually verified against knowledge base.")
 
                         elif event_type == "error":
                             if data.get("is_hallucinated"):
@@ -393,15 +410,15 @@ if user_prompt:
 
         if is_error:
             message_placeholder.empty()
-            status_placeholder.error(f"✖ {error_message}")
+            status_placeholder.error(f"Error: {error_message}")
             st.session_state.messages.append({
                 "role": "assistant",
-                "content": f"✖ *{error_message}*"
+                "content": f"*Error: {error_message}*"
             })
         elif is_hallucinated:
             message_placeholder.empty()
-            status_placeholder.warning("⚠️ Potential hallucination or unverified claim detected.")
-            with st.expander("⚠️ View unverified response (Use with caution)", expanded=False):
+            status_placeholder.warning("Warning: Potential hallucination or unverified claim detected.")
+            with st.expander("View unverified response (Use with caution)", expanded=False):
                 st.markdown(raw_response)
 
             render_citations_ui(citations_list)
