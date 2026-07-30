@@ -169,11 +169,27 @@ class RAGManager:
             except Exception:
                 pass
 
-            self.collection.add(
-                documents=chunks,
-                metadatas=metadatas,
-                ids=ids
-            )
+            try:
+                self.collection.add(
+                    documents=chunks,
+                    metadatas=metadatas,
+                    ids=ids
+                )
+            except Exception as exc:
+                if "dimension" in str(exc).lower():
+                    logger.warning(f"ChromaDB collection dimension mismatch detected ({exc}). Recreating collection...")
+                    self.chroma_client.delete_collection(self.collection_name)
+                    self.collection = self.chroma_client.get_or_create_collection(
+                        name=self.collection_name,
+                        embedding_function=self.embedding_fn
+                    )
+                    self.collection.add(
+                        documents=chunks,
+                        metadatas=metadatas,
+                        ids=ids
+                    )
+                else:
+                    raise exc
 
             await update_cache_fn(file_path, file_hash, len(chunks))
             logger.info(f"Successfully indexed {len(chunks)} chunks from {filename}.")
