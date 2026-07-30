@@ -65,14 +65,36 @@ class RAGManager:
         self.chroma_client = chromadb.PersistentClient(path=settings.CHROMA_PERSIST_DIR)
         self.collection_name = "health_knowledge"
         self.embedding_fn = GeminiEmbeddingFunction()
-        self.collection = self.chroma_client.get_or_create_collection(
-            name=self.collection_name,
-            embedding_function=self.embedding_fn
-        )
         self.async_client = AsyncOpenAI(
             base_url=settings.EMBEDDING_BASE_URL,
             api_key=settings.EMBEDDING_API_KEY or "dummy_key"
         )
+        self.init_collection()
+
+    def init_collection(self) -> None:
+        """Get or create ChromaDB collection, resetting if dimension mismatch occurs."""
+        try:
+            self.collection = self.chroma_client.get_or_create_collection(
+                name=self.collection_name,
+                embedding_function=self.embedding_fn
+            )
+            if self.collection.count() > 0:
+                try:
+                    self.collection.query(query_texts=["health check"], n_results=1)
+                except Exception as exc:
+                    if "dimension" in str(exc).lower():
+                        logger.warning(f"ChromaDB dimension mismatch ({exc}). Resetting collection...")
+                        self.chroma_client.delete_collection(self.collection_name)
+                        self.collection = self.chroma_client.get_or_create_collection(
+                            name=self.collection_name,
+                            embedding_function=self.embedding_fn
+                        )
+        except Exception as exc:
+            logger.error(f"Error initializing ChromaDB collection: {exc}")
+            self.collection = self.chroma_client.get_or_create_collection(
+                name=self.collection_name,
+                embedding_function=self.embedding_fn
+            )
 
     @staticmethod
     def compute_file_hash(file_path: str) -> str:
