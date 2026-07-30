@@ -209,8 +209,10 @@ def render_citations_ui(citations: list) -> None:
 
 
 # Initialize Session State Variables
+import uuid
+
 if "session_id" not in st.session_state:
-    st.session_state.session_id = create_new_remote_session()
+    st.session_state.session_id = str(uuid.uuid4())
 
 if "messages" not in st.session_state:
     st.session_state.messages = fetch_remote_history(st.session_state.session_id)
@@ -229,8 +231,7 @@ with st.sidebar:
     st.markdown("---")
 
     if st.button("+ Start New Chat", use_container_width=True):
-        new_id = create_new_remote_session("New Chat")
-        st.session_state.session_id = new_id
+        st.session_state.session_id = str(uuid.uuid4())
         st.session_state.messages = []
         st.session_state.editing_title = False
         st.session_state.pending_prompt = None
@@ -239,7 +240,8 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### Chat History")
 
-    active_sessions = fetch_active_sessions()
+    raw_sessions = fetch_active_sessions()
+    active_sessions = [s for s in raw_sessions if s.get("title") and s.get("title") != "New Chat"]
 
     if active_sessions:
         for s in active_sessions:

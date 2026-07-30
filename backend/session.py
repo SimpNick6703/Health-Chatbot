@@ -94,7 +94,7 @@ class SessionStore:
         return session_id
 
     async def list_active_sessions(self) -> List[Dict[str, Any]]:
-        """Retrieve all active (non-archived) sessions ordered by last_active_at DESC.
+        """Retrieve all active (non-archived) sessions that have at least 1 message turn.
 
         Returns:
             List of session dicts containing session_id, title, created_at, last_active_at.
@@ -102,9 +102,12 @@ class SessionStore:
         async with aiosqlite.connect(self.db_path) as db:
             async with db.execute(
                 """
-                SELECT session_id, title, created_at, last_active_at FROM sessions
-                WHERE is_archived = 0
-                ORDER BY last_active_at DESC
+                SELECT s.session_id, s.title, s.created_at, s.last_active_at
+                FROM sessions s
+                JOIN messages m ON s.session_id = m.session_id
+                WHERE s.is_archived = 0 AND s.title IS NOT NULL AND s.title != 'New Chat' AND s.title != ''
+                GROUP BY s.session_id
+                ORDER BY s.last_active_at DESC
                 """
             ) as cursor:
                 rows = await cursor.fetchall()
@@ -112,7 +115,7 @@ class SessionStore:
         return [
             {
                 "session_id": row[0],
-                "title": row[1] or "New Chat",
+                "title": row[1],
                 "created_at": row[2],
                 "last_active_at": row[3]
             } for row in rows
@@ -249,6 +252,14 @@ class SessionStore:
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(
                 """
+                INSERT INTO sessions (session_id, title, created_at, last_active_at, is_archived)
+                VALUES (?, 'New Chat', ?, ?, 0)
+                ON CONFLICT(session_id) DO UPDATE SET last_active_at = excluded.last_active_at
+                """,
+                (session_id, now, now)
+            )
+            await db.execute(
+                """
                 INSERT INTO messages (session_id, role, content, intent, sources, had_pii, is_hallucinated, flagged, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
@@ -260,10 +271,6 @@ class SessionStore:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (session_id, "assistant", assistant_msg, intent, sources_str, 0, hallucinated_val, flagged_val, now)
-            )
-            await db.execute(
-                "UPDATE sessions SET last_active_at = ? WHERE session_id = ?",
-                (now, session_id)
             )
             await db.commit()
 
