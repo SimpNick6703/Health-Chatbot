@@ -9,6 +9,7 @@ class ChatRequest(BaseModel):
 
     session_id: str = Field(..., description="Unique identifier for the chat session.")
     message: str = Field(..., description="User message text.")
+    images: Optional[List[str]] = Field(default=None, description="List of base64-encoded image strings for vision pipeline.")
 
 
 class SessionResponse(BaseModel):

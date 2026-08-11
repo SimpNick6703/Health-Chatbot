@@ -2,8 +2,16 @@ import { useState, useRef, useEffect } from 'react';
 import { Plus, Send, Paperclip, Edit2, Square, ChevronDown, ChevronUp } from 'lucide-react';
 import './index.css';
 
+interface Message {
+  id: number;
+  role: 'user' | 'ai';
+  content: string;
+  citations: any[];
+  metric: string | null;
+}
+
 function App() {
-  const [messages, setMessages] = useState([
+  const [messages, setMessages] = useState<Message[]>([
     { id: 1, role: 'ai', content: 'Hello! I am your AI Health Assistant. How can I help you today?', citations: [], metric: null },
   ]);
   const [input, setInput] = useState('');
