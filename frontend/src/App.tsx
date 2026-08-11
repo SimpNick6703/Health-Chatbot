@@ -4,6 +4,13 @@ import ReactMarkdown from 'react-markdown';
 import { v4 as uuidv4 } from 'uuid';
 import './index.css';
 
+interface SessionItem {
+  session_id: string;
+  title: string;
+  created_at: string;
+  last_active_at: string;
+}
+
 interface Message {
   id: string;
   role: 'user' | 'ai';
@@ -22,6 +29,7 @@ function App() {
     return localStorage.getItem('chatSessionId') || `sess-${uuidv4()}`;
   });
 
+  const [sessionList, setSessionList] = useState<SessionItem[]>([]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
@@ -71,6 +79,23 @@ function App() {
       }
     };
     fetchHistory();
+  }, [sessionId]);
+
+  // Fetch list of active sessions
+  const fetchSessions = async () => {
+    try {
+      const res = await fetch('/api/sessions');
+      if (res.ok) {
+        const data = await res.json();
+        setSessionList(data.sessions || []);
+      }
+    } catch (e) {
+      console.error("Failed to fetch sessions", e);
+    }
+  };
+
+  useEffect(() => {
+    fetchSessions();
   }, [sessionId]);
 
   const scrollToBottom = () => {
@@ -241,6 +266,7 @@ function App() {
     } finally {
       setIsStreaming(false);
       abortControllerRef.current = null;
+      fetchSessions();
     }
   };
 
@@ -296,9 +322,19 @@ function App() {
           New Chat
         </button>
         <div className="history-list">
-          <div className="history-item active">Current Session</div>
-          <div className="history-item">Symptoms of Flu</div>
-          <div className="history-item">Diet Guidelines</div>
+          {sessionList.map((s) => (
+            <div
+              key={s.session_id}
+              className={`history-item ${s.session_id === sessionId ? 'active' : ''}`}
+              onClick={() => setSessionId(s.session_id)}
+              title={s.title}
+            >
+              {s.title || 'Untitled Session'}
+            </div>
+          ))}
+          {sessionList.length === 0 && (
+            <div className="history-item active">Current Session</div>
+          )}
         </div>
       </aside>
 
