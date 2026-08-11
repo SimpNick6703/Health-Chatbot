@@ -11,6 +11,8 @@ function App() {
   const [images, setImages] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const sessionIdRef = useRef<string>(`sess-${Date.now()}`);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -20,27 +22,88 @@ function App() {
     scrollToBottom();
   }, [messages]);
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (!input.trim() && images.length === 0) return;
     
-    setMessages(prev => [...prev, { id: Date.now(), role: 'user', content: input, citations: [], metric: null }]);
+    const userMessage = input;
+    setMessages(prev => [...prev, { id: Date.now(), role: 'user', content: userMessage, citations: [], metric: null }]);
     setInput('');
     setImages([]);
     setIsStreaming(true);
     
-    // Mock streaming response
-    setTimeout(() => {
-      setMessages(prev => [...prev, { 
-        id: Date.now() + 1, 
-        role: 'ai', 
-        content: 'I understand you are asking about a health concern. Please remember this is for informational purposes only.',
-        citations: [
-            { title: 'MedlinePlus: General Guidelines', url: 'https://medlineplus.gov', source_type: 'medlineplus_api', snippet: 'General health information guidelines...' }
-        ],
-        metric: 'Time-to-verified: 1.2s'
-      }]);
+    // Add placeholder for AI response
+    const aiMessageId = Date.now() + 1;
+    setMessages(prev => [...prev, { 
+      id: aiMessageId, 
+      role: 'ai', 
+      content: '', 
+      citations: [], 
+      metric: null 
+    }]);
+
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionIdRef.current, message: userMessage }),
+        signal: abortController.signal
+      });
+      
+      if (!res.ok) throw new Error("Failed to send message");
+      
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder("utf-8");
+      
+      if (reader) {
+        let aiContent = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          
+          const chunk = decoder.decode(value, { stream: true });
+          const lines = chunk.split("\n");
+          
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              const dataStr = line.substring(6);
+              if (dataStr === "[DONE]") {
+                setIsStreaming(false);
+                break;
+              }
+              try {
+                const parsed = JSON.parse(dataStr);
+                if (parsed.content) {
+                  aiContent += parsed.content;
+                  setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, content: aiContent } : m));
+                }
+                if (parsed.stage === "verification_complete") {
+                    setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, metric: `Time-to-verified: ${parsed.time_to_verified || 'N/A'}` } : m));
+                }
+              } catch (e) {
+                console.error("Error parsing SSE data", e);
+              }
+            }
+          }
+        }
+      }
+    } catch (error: any) {
+      if (error.name !== 'AbortError') {
+        setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, content: m.content + "\n[Error generating response]" } : m));
+      }
+    } finally {
       setIsStreaming(false);
-    }, 2000);
+      abortControllerRef.current = null;
+    }
+  };
+
+  const handleCancel = () => {
+    if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+    }
+    setIsStreaming(false);
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -144,7 +207,7 @@ function App() {
               }}
             />
             {isStreaming ? (
-              <button className="cancel-btn" onClick={() => setIsStreaming(false)}>
+              <button className="cancel-btn" onClick={handleCancel}>
                 <Square size={18} fill="currentColor" />
               </button>
             ) : (
