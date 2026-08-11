@@ -4,7 +4,7 @@ import os
 import json
 import logging
 import asyncio
-from typing import List, Dict, Any, AsyncGenerator
+from typing import List, Dict, Any, AsyncGenerator, Optional
 
 from config import settings
 from guardrails import pii_detector, intent_classifier, input_moderator, hallucination_detector
