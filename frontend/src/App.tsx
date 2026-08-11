@@ -18,6 +18,10 @@ const initialMessage: Message = { id: 'msg-1', role: 'ai', content: 'Hello! I am
 
 function App() {
   const [messages, setMessages] = useState<Message[]>([initialMessage]);
+  const [sessionId, setSessionId] = useState<string>(() => {
+    return localStorage.getItem('chatSessionId') || `sess-${uuidv4()}`;
+  });
+
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
@@ -26,7 +30,45 @@ function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
-  const sessionIdRef = useRef<string>(`sess-${uuidv4()}`);
+  const sessionIdRef = useRef<string>(sessionId);
+
+  // Sync ref and local storage whenever sessionId changes
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+    localStorage.setItem('chatSessionId', sessionId);
+  }, [sessionId]);
+
+  // Load history on mount or session change
+  useEffect(() => {
+    const fetchHistory = async () => {
+      try {
+        const res = await fetch(`/api/session/${sessionId}/history`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.messages && data.messages.length > 0) {
+            const formatted = data.messages.map((m: any, i: number) => ({
+              id: m.id ? m.id.toString() : `hist-${i}`,
+              role: m.role,
+              content: m.content || m.assistant_msg || m.user_msg || '',
+              citations: m.sources ? m.sources.map((s: string) => ({ title: s, url: '#' })) : [],
+              metric: null,
+              isHallucination: m.is_hallucinated,
+              warningMessage: m.is_hallucinated ? 'Potential hallucination or unverified claim detected.' : undefined
+            }));
+            setMessages([initialMessage, ...formatted]);
+          } else {
+            setMessages([initialMessage]);
+          }
+        } else {
+          setMessages([initialMessage]);
+        }
+      } catch (e) {
+        console.error("Failed to load history", e);
+        setMessages([initialMessage]);
+      }
+    };
+    fetchHistory();
+  }, [sessionId]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -245,8 +287,7 @@ function App() {
     <div className="app-container">
       <aside className="sidebar">
         <button className="new-chat-btn" onClick={() => {
-          setMessages([initialMessage]);
-          sessionIdRef.current = `sess-${uuidv4()}`;
+          setSessionId(`sess-${uuidv4()}`);
         }}>
           <Plus size={18} />
           New Chat
@@ -282,12 +323,19 @@ function App() {
                   </div>
                 ) : (
                   <>
-                    {msg.isHallucination && (
+                    {msg.isHallucination ? (
                       <div className="hallucination-warning">
                         <strong>Warning:</strong> {msg.warningMessage}
+                        <details style={{ marginTop: '0.5rem', opacity: 0.8 }}>
+                          <summary style={{ cursor: 'pointer', fontWeight: 'bold' }}>Show Hidden Content</summary>
+                          <div style={{ marginTop: '0.5rem', opacity: 0.9 }}>
+                            <ReactMarkdown>{msg.content}</ReactMarkdown>
+                          </div>
+                        </details>
                       </div>
+                    ) : (
+                      <ReactMarkdown>{msg.content}</ReactMarkdown>
                     )}
-                    <ReactMarkdown>{msg.content}</ReactMarkdown>
                     {msg.citations && msg.citations.length > 0 && (
                         <div style={{ marginTop: '1rem' }}>
                             {msg.citations.map((cit: any, i: number) => <Citation key={i} citation={cit} />)}
