@@ -13,10 +13,12 @@ interface Message {
   warningMessage?: string;
 }
 
+const initialMessage: Message = { id: 'msg-1', role: 'ai', content: 'Hello! I am your AI Health Assistant. How can I help you today?', citations: [], metric: null };
+
+const generateId = () => Date.now().toString(36) + Math.random().toString(36).substring(2);
+
 function App() {
-  const [messages, setMessages] = useState<Message[]>([
-    { id: 'msg-1', role: 'ai', content: 'Hello! I am your AI Health Assistant. How can I help you today?', citations: [], metric: null },
-  ]);
+  const [messages, setMessages] = useState<Message[]>([initialMessage]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
@@ -39,14 +41,14 @@ function App() {
     if (!input.trim() && images.length === 0) return;
     
     const userMessage = input;
-    const userMsgId = crypto.randomUUID();
+    const userMsgId = generateId();
     setMessages(prev => [...prev, { id: userMsgId, role: 'user', content: userMessage, citations: [], metric: null }]);
     setInput('');
     setImages([]);
     setIsStreaming(true);
     
     // Add placeholder for AI response
-    const aiMessageId = crypto.randomUUID();
+    const aiMessageId = generateId();
     setMessages(prev => [...prev, { 
       id: aiMessageId, 
       role: 'ai', 
@@ -130,7 +132,7 @@ function App() {
     newMessages.push(updatedUserMsg);
     
     // Placeholder for AI
-    const aiMessageId = crypto.randomUUID();
+    const aiMessageId = generateId();
     newMessages.push({ id: aiMessageId, role: 'ai', content: '', citations: [], metric: null });
     
     setMessages(newMessages);
@@ -243,7 +245,10 @@ function App() {
   return (
     <div className="app-container">
       <aside className="sidebar">
-        <button className="new-chat-btn" onClick={() => setMessages([])}>
+        <button className="new-chat-btn" onClick={() => {
+          setMessages([initialMessage]);
+          sessionIdRef.current = `sess-${Date.now()}`;
+        }}>
           <Plus size={18} />
           New Chat
         </button>
