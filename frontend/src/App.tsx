@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Plus, Send, Paperclip, Edit2, Square, ChevronDown, ChevronUp } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import { v4 as uuidv4 } from 'uuid';
 import './index.css';
 
 interface Message {
@@ -15,8 +16,6 @@ interface Message {
 
 const initialMessage: Message = { id: 'msg-1', role: 'ai', content: 'Hello! I am your AI Health Assistant. How can I help you today?', citations: [], metric: null };
 
-const generateId = () => Date.now().toString(36) + Math.random().toString(36).substring(2);
-
 function App() {
   const [messages, setMessages] = useState<Message[]>([initialMessage]);
   const [input, setInput] = useState('');
@@ -27,7 +26,7 @@ function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
-  const sessionIdRef = useRef<string>(`sess-${Date.now()}`);
+  const sessionIdRef = useRef<string>(`sess-${uuidv4()}`);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -41,14 +40,14 @@ function App() {
     if (!input.trim() && images.length === 0) return;
     
     const userMessage = input;
-    const userMsgId = generateId();
+    const userMsgId = uuidv4();
     setMessages(prev => [...prev, { id: userMsgId, role: 'user', content: userMessage, citations: [], metric: null }]);
     setInput('');
     setImages([]);
     setIsStreaming(true);
     
     // Add placeholder for AI response
-    const aiMessageId = generateId();
+    const aiMessageId = uuidv4();
     setMessages(prev => [...prev, { 
       id: aiMessageId, 
       role: 'ai', 
@@ -132,7 +131,7 @@ function App() {
     newMessages.push(updatedUserMsg);
     
     // Placeholder for AI
-    const aiMessageId = generateId();
+    const aiMessageId = uuidv4();
     newMessages.push({ id: aiMessageId, role: 'ai', content: '', citations: [], metric: null });
     
     setMessages(newMessages);
@@ -247,7 +246,7 @@ function App() {
       <aside className="sidebar">
         <button className="new-chat-btn" onClick={() => {
           setMessages([initialMessage]);
-          sessionIdRef.current = `sess-${Date.now()}`;
+          sessionIdRef.current = `sess-${uuidv4()}`;
         }}>
           <Plus size={18} />
           New Chat
