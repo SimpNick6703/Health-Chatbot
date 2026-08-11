@@ -17,7 +17,8 @@ class LLMClient:
         """Initialize AsyncOpenAI client targeting BASE_URL."""
         self.client = AsyncOpenAI(
             base_url=settings.BASE_URL,
-            api_key=settings.API_KEY or "dummy_key"
+            api_key=settings.API_KEY or "dummy_key",
+            timeout=15.0
         )
 
     async def generate_tool_completion(

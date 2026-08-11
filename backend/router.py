@@ -109,7 +109,9 @@ async def process_query(
         return
 
     # 3. Input Moderation Check
+    logger.info(f"Session {session_id}: Starting input moderation check.")
     mod_result = await input_moderator.check_moderation(cleaned_text, session_id)
+    logger.info(f"Session {session_id}: Input moderation check finished. Blocked={mod_result.blocked}")
     if mod_result.blocked:
         logger.warning(f"Session {session_id}: Input blocked by moderation.")
         refusal = input_moderator.MODERATION_REFUSAL_RESPONSE
@@ -125,11 +127,14 @@ async def process_query(
         return
 
     # 4. Build Conversation Context & Tool Calling Round
+    logger.info(f"Session {session_id}: Fetching history and building messages.")
     history = await session_store.get_history(session_id, limit=settings.SESSION_MAX_TURNS)
     messages = format_system_messages(SYSTEM_PROMPT_CONTENT, history, cleaned_text, images)
 
     # Initial completion to check if LLM requests tool execution
+    logger.info(f"Session {session_id}: Initiating LLM generate_tool_completion.")
     tool_message = await llm_client.generate_tool_completion(messages, await get_openai_tools(), session_id)
+    logger.info(f"Session {session_id}: LLM generate_tool_completion finished.")
     citations: List[CitationItem] = []
     tool_chunks: List[RetrievedChunk] = []
 

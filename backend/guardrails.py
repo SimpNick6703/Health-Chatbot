@@ -214,7 +214,8 @@ class HallucinationDetector:
         context_str: str = "\n---\n".join(source_chunks)
         client = AsyncOpenAI(
             base_url=settings.JUDGE_BASE_URL,
-            api_key=settings.JUDGE_API_KEY
+            api_key=settings.JUDGE_API_KEY,
+            timeout=15.0
         )
 
         headers = settings.get_portkey_headers(session_id)
