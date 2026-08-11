@@ -32,10 +32,13 @@ chroma_data/
 Thumbs.db
 .DS_Store
 
-# Deploy
-.agents/*
-.claude/*
+# Custom
+.agents*
+.claude*
+Blindspot.md
+ClaudeMadePRD.md
 deploy.ps1
+implementation_plan.md
 
 # Testing
 .pytest_cache/

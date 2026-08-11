@@ -48,15 +48,13 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Enable CORS for frontend client
+# Enable CORS strictly for local frontend development. 
+# Production uses Nginx reverse proxy so CORS is not needed cross-origin.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:3000", 
-        "http://localhost:5173", 
-        "http://localhost:8501", 
-        "http://192.168.31.254:3000", 
-        "http://192.168.31.254:8501"
+        "http://localhost:5173",
+        "http://192.168.31.254:5173"
     ],
     allow_credentials=True,
     allow_methods=["*"],

@@ -7,7 +7,7 @@ from typing import List, Dict, Any, AsyncGenerator
 
 from config import settings
 from guardrails import pii_detector, intent_classifier, input_moderator, hallucination_detector
-from tools import HEALTHCARE_TOOLS, execute_tool_call
+from tools import get_openai_tools, execute_tool_call
 from llm_client import llm_client
 from session import session_store
 from models import CitationItem, RetrievedChunk
@@ -113,7 +113,7 @@ async def process_query(session_id: str, user_message: str) -> AsyncGenerator[Di
     messages = format_system_messages(SYSTEM_PROMPT_CONTENT, history, cleaned_text)
 
     # Initial completion to check if LLM requests tool execution
-    tool_message = await llm_client.generate_tool_completion(messages, HEALTHCARE_TOOLS, session_id)
+    tool_message = await llm_client.generate_tool_completion(messages, await get_openai_tools(), session_id)
     citations: List[CitationItem] = []
     tool_chunks: List[RetrievedChunk] = []
 

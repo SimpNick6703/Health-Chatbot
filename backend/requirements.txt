@@ -9,3 +9,4 @@ chromadb>=0.4.24
 sse-starlette>=2.0.0
 pytest>=8.0.0
 pytest-asyncio>=0.23.0
+fastmcp>=0.1.0

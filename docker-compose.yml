@@ -2,6 +2,7 @@ services:
   backend:
     build: ./backend
     ports:
+      # Expose for direct local development if needed, but Nginx is main entrypoint
       - "8008:8000"
     env_file:
       - .env
@@ -17,12 +18,10 @@ services:
   frontend:
     build: ./frontend
     ports:
-      - "8501:8501"
+      - "8000:80"
     depends_on:
       backend:
         condition: service_healthy
-    environment:
-      - BACKEND_URL=http://backend:8000
 
 volumes:
   app_data:
