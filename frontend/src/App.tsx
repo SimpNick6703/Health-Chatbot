@@ -8,6 +8,8 @@ interface Message {
   content: string;
   citations: any[];
   metric: string | null;
+  isHallucination?: boolean;
+  warningMessage?: string;
 }
 
 function App() {
@@ -16,6 +18,8 @@ function App() {
   ]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
+  const [editingMessageId, setEditingMessageId] = useState<number | null>(null);
+  const [editInput, setEditInput] = useState('');
   const [images, setImages] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -56,7 +60,7 @@ function App() {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sessionIdRef.current, message: userMessage }),
+        body: JSON.stringify({ session_id: sessionIdRef.current, message: userMessage, images: images }),
         signal: abortController.signal
       });
       
@@ -90,8 +94,92 @@ function App() {
                 if (parsed.stage === "verification_complete") {
                     setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, metric: `Time-to-verified: ${parsed.time_to_verified || 'N/A'}` } : m));
                 }
+                if (parsed.type === "hallucination") {
+                    setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, isHallucination: true, warningMessage: parsed.message, content: parsed.raw_response } : m));
+                }
               } catch (e) {
-                console.error("Error parsing SSE data", e);
+                // Ignore parse errors for incomplete chunks
+              }
+            }
+          }
+        }
+      }
+    } catch (error: any) {
+      if (error.name !== 'AbortError') {
+        setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, content: m.content + "\n[Error generating response]" } : m));
+      }
+    } finally {
+      setIsStreaming(false);
+      abortControllerRef.current = null;
+    }
+  };
+
+  const handleEditSave = async (msgId: number) => {
+    if (!editInput.trim()) return;
+    
+    // Find index of the message being edited
+    const msgIndex = messages.findIndex(m => m.id === msgId);
+    if (msgIndex === -1) return;
+    
+    // Update locally: truncate history, update message
+    const newMessages = messages.slice(0, msgIndex);
+    const updatedUserMsg = { ...messages[msgIndex], content: editInput };
+    newMessages.push(updatedUserMsg);
+    
+    // Placeholder for AI
+    const aiMessageId = Date.now() + 1;
+    newMessages.push({ id: aiMessageId, role: 'ai', content: '', citations: [], metric: null });
+    
+    setMessages(newMessages);
+    setEditingMessageId(null);
+    setIsStreaming(true);
+
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
+    try {
+      const res = await fetch('/api/chat/edit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionIdRef.current, message_id: msgId, message: editInput }),
+        signal: abortController.signal
+      });
+      
+      if (!res.ok) throw new Error("Failed to edit message");
+      
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder("utf-8");
+      
+      if (reader) {
+        let aiContent = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          
+          const chunk = decoder.decode(value, { stream: true });
+          const lines = chunk.split("\n");
+          
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              const dataStr = line.substring(6);
+              if (dataStr === "[DONE]") {
+                setIsStreaming(false);
+                break;
+              }
+              try {
+                const parsed = JSON.parse(dataStr);
+                if (parsed.content) {
+                  aiContent += parsed.content;
+                  setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, content: aiContent } : m));
+                }
+                if (parsed.stage === "verification_complete") {
+                    setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, metric: `Time-to-verified: ${parsed.time_to_verified || 'N/A'}` } : m));
+                }
+                if (parsed.type === "hallucination") {
+                    setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, isHallucination: true, warningMessage: parsed.message, content: parsed.raw_response } : m));
+                }
+              } catch (e) {
+                // Ignore parse errors for incomplete chunks
               }
             }
           }
@@ -114,10 +202,23 @@ function App() {
     setIsStreaming(false);
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
-        const newImages = Array.from(e.target.files).slice(0, 5 - images.length).map(file => URL.createObjectURL(file));
-        setImages(prev => [...prev, ...newImages].slice(0, 5));
+        const files = Array.from(e.target.files).slice(0, 5 - images.length);
+        const base64Promises = files.map(file => {
+            return new Promise<string>((resolve, reject) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = () => resolve(reader.result as string);
+                reader.onerror = error => reject(error);
+            });
+        });
+        try {
+            const newImages = await Promise.all(base64Promises);
+            setImages(prev => [...prev, ...newImages].slice(0, 5));
+        } catch (err) {
+            console.error("Error reading files", err);
+        }
     }
   };
 
@@ -159,17 +260,42 @@ function App() {
           {messages.map(msg => (
             <div key={msg.id} className={`message ${msg.role}`}>
               <div className="bubble">
-                {msg.content}
-                {msg.citations && msg.citations.length > 0 && (
-                    <div style={{ marginTop: '1rem' }}>
-                        {msg.citations.map((cit: any, i: number) => <Citation key={i} citation={cit} />)}
+                {editingMessageId === msg.id ? (
+                  <div className="edit-container">
+                    <textarea 
+                      className="edit-input" 
+                      value={editInput} 
+                      onChange={(e) => setEditInput(e.target.value)} 
+                      autoFocus
+                    />
+                    <div className="edit-actions">
+                      <button onClick={() => setEditingMessageId(null)}>Cancel</button>
+                      <button className="primary" onClick={() => handleEditSave(msg.id)}>Save & Submit</button>
                     </div>
+                  </div>
+                ) : (
+                  <>
+                    {msg.isHallucination && (
+                      <div className="hallucination-warning">
+                        <strong>Warning:</strong> {msg.warningMessage}
+                      </div>
+                    )}
+                    {msg.content}
+                    {msg.citations && msg.citations.length > 0 && (
+                        <div style={{ marginTop: '1rem' }}>
+                            {msg.citations.map((cit: any, i: number) => <Citation key={i} citation={cit} />)}
+                        </div>
+                    )}
+                    {msg.metric && <div className="metric">{msg.metric}</div>}
+                  </>
                 )}
-                {msg.metric && <div className="metric">{msg.metric}</div>}
               </div>
-              {msg.role === 'user' && (
+              {msg.role === 'user' && editingMessageId !== msg.id && (
                 <div className="message-actions">
-                  <button className="icon-btn" title="Edit message"><Edit2 size={14} /></button>
+                  <button className="icon-btn" title="Edit message" onClick={() => {
+                    setEditInput(msg.content);
+                    setEditingMessageId(msg.id);
+                  }}><Edit2 size={14} /></button>
                 </div>
               )}
             </div>

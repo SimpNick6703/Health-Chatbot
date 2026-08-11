@@ -10,7 +10,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 
 from config import settings
-from models import ChatRequest, SessionResponse, SessionListResponse, SessionItem, UpdateSessionRequest
+from models import (
+    ChatRequest, 
+    ChatEditRequest,
+    SessionResponse, 
+    SessionListResponse, 
+    SessionItem, 
+    UpdateSessionRequest
+)
 from session import session_store
 from rag import rag_manager
 from router import process_query
@@ -128,6 +135,27 @@ async def chat_endpoint(request: ChatRequest) -> EventSourceResponse:
 
     generator = process_query(
         session_id=request.session_id,
-        user_message=request.message
+        user_message=request.message,
+        images=request.images
+    )
+    return EventSourceResponse(generator)
+
+@app.post("/api/chat/edit")
+async def chat_edit_endpoint(request: ChatEditRequest) -> EventSourceResponse:
+    """Edit a past message, delete subsequent history, and return an SSE event stream."""
+    if not request.message.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Message text cannot be empty."
+        )
+
+    # Rollback conversation history atomically from the target message ID onwards
+    await session_store.delete_messages_from_id(request.session_id, request.message_id)
+
+    # Proceed as a normal chat request
+    generator = process_query(
+        session_id=request.session_id,
+        user_message=request.message,
+        images=request.images
     )
     return EventSourceResponse(generator)

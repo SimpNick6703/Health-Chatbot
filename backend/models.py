@@ -12,6 +12,14 @@ class ChatRequest(BaseModel):
     images: Optional[List[str]] = Field(default=None, description="List of base64-encoded image strings for vision pipeline.")
 
 
+class ChatEditRequest(BaseModel):
+    """Chat message edit request payload."""
+
+    session_id: str = Field(..., description="Unique identifier for the chat session.")
+    message_id: int = Field(..., description="The ID of the message to edit. Everything from this message onwards will be deleted and regenerated.")
+    message: str = Field(..., description="New user message text.")
+    images: Optional[List[str]] = Field(default=None, description="Optional vision images.")
+
 class SessionResponse(BaseModel):
     """Response payload when creating a new session."""
 

@@ -288,10 +288,12 @@ class RAGManager:
                 score = float(1.0 - dist) if dist is not None else 0.0
                 if score < settings.RAG_SIMILARITY_THRESHOLD:
                     continue
+                source_file = meta.get("source", "unknown")
                 retrieved.append(RetrievedChunk(
                     content=doc,
-                    source=meta.get("source", "unknown"),
+                    source=source_file,
                     source_type="local_kb",
+                    url=f"https://github.com/SimpNick6703/Health-Chatbot/tree/main/backend/knowledge/{source_file}",
                     score=max(score, 0.0),
                     heading=meta.get("heading", ""),
                     snippet_text=meta.get("snippet", doc[:200])

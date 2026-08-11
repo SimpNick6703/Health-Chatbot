@@ -3,6 +3,7 @@
 import os
 import json
 import logging
+import asyncio
 from typing import List, Dict, Any, AsyncGenerator
 
 from config import settings
@@ -24,8 +25,9 @@ if os.path.exists(SYSTEM_PROMPT_PATH):
 
 def format_system_messages(
     system_prompt: str,
-    history: List[Dict[str, str]],
-    query: str
+    history: List[Dict[str, Any]],
+    query: str,
+    images: Optional[List[str]] = None
 ) -> List[Dict[str, Any]]:
     """Format base prompt messages array for LLM completion API.
 
@@ -42,11 +44,25 @@ def format_system_messages(
     for msg in history:
         messages.append({"role": msg["role"], "content": msg["content"]})
 
-    messages.append({"role": "user", "content": query})
+    if not images:
+        messages.append({"role": "user", "content": query})
+    else:
+        content_array = [{"type": "text", "text": query}]
+        for img_data in images[:5]:
+            content_array.append({
+                "type": "image_url",
+                "image_url": {"url": img_data}
+            })
+        messages.append({"role": "user", "content": content_array})
+
     return messages
 
 
-async def process_query(session_id: str, user_message: str) -> AsyncGenerator[Dict[str, str], None]:
+async def process_query(
+    session_id: str, 
+    user_message: str, 
+    images: Optional[List[str]] = None
+) -> AsyncGenerator[Dict[str, str], None]:
     """Execute tool-augmented query pipeline and yield SSE event dictionary objects.
 
     Args:
@@ -110,7 +126,7 @@ async def process_query(session_id: str, user_message: str) -> AsyncGenerator[Di
 
     # 4. Build Conversation Context & Tool Calling Round
     history = await session_store.get_history(session_id, limit=settings.SESSION_MAX_TURNS)
-    messages = format_system_messages(SYSTEM_PROMPT_CONTENT, history, cleaned_text)
+    messages = format_system_messages(SYSTEM_PROMPT_CONTENT, history, cleaned_text, images)
 
     # Initial completion to check if LLM requests tool execution
     tool_message = await llm_client.generate_tool_completion(messages, await get_openai_tools(), session_id)
@@ -170,9 +186,15 @@ async def process_query(session_id: str, user_message: str) -> AsyncGenerator[Di
         async for token in llm_client.generate_stream(messages, session_id):
             collected_response += token
             yield {"event": "token", "data": json.dumps({"token": token})}
+    except asyncio.CancelledError:
+        logger.info(f"Session {session_id}: Stream generation cancelled by client.")
+        return
     except Exception as exc:
         logger.error(f"LLM streaming request failed: {exc}")
-        yield {"event": "error", "data": json.dumps({"message": "Connection lost or streaming error."})}
+        if images:
+            yield {"event": "error", "data": json.dumps({"message": "I'm sorry, I was unable to process the uploaded images at this time. Please try again without the images or check your connection."})}
+        else:
+            yield {"event": "error", "data": json.dumps({"message": "Connection lost or streaming error."})}
         return
 
     # 6. Hallucination Detection Verification Stage

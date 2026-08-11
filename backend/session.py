@@ -214,7 +214,7 @@ class SessionStore:
         async with aiosqlite.connect(self.db_path) as db:
             async with db.execute(
                 """
-                SELECT role, content, sources, is_hallucinated, created_at FROM messages
+                SELECT id, role, content, sources, is_hallucinated, created_at FROM messages
                 WHERE session_id = ?
                 ORDER BY id ASC
                 """,
@@ -224,15 +224,27 @@ class SessionStore:
 
         messages = []
         for row in rows:
-            sources_list = json.loads(row[2]) if row[2] else []
+            sources_list = json.loads(row[3]) if row[3] else []
             messages.append({
-                "role": row[0],
-                "content": row[1],
+                "id": row[0],
+                "role": row[1],
+                "content": row[2],
                 "sources": sources_list,
-                "is_hallucinated": bool(row[3]),
-                "created_at": row[4]
+                "is_hallucinated": bool(row[4]),
+                "created_at": row[5]
             })
         return messages
+
+    async def delete_messages_from_id(self, session_id: str, message_id: int) -> None:
+        """Atomically delete all messages in a session from a specific message ID onwards.
+        Used for message editing to rollback conversation history.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "DELETE FROM messages WHERE session_id = ? AND id >= ?",
+                (session_id, message_id)
+            )
+            await db.commit()
 
     async def save_turn(
         self,
