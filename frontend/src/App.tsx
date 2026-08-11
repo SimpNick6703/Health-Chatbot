@@ -87,8 +87,9 @@ function App() {
               }
               try {
                 const parsed = JSON.parse(dataStr);
-                if (parsed.content) {
-                  aiContent += parsed.content;
+                const tokenVal = parsed.token || parsed.content;
+                if (tokenVal) {
+                  aiContent += tokenVal;
                   setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, content: aiContent } : m));
                 }
                 if (parsed.stage === "verification_complete") {
@@ -168,8 +169,8 @@ function App() {
               }
               try {
                 const parsed = JSON.parse(dataStr);
-                if (parsed.content) {
-                  aiContent += parsed.content;
+                if (parsed.token || parsed.content) {
+                  aiContent += (parsed.token || parsed.content);
                   setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, content: aiContent } : m));
                 }
                 if (parsed.stage === "verification_complete") {
