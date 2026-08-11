@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
 import { Plus, Send, Paperclip, Edit2, Square, ChevronDown, ChevronUp } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
 import './index.css';
 
 interface Message {
-  id: number;
+  id: string;
   role: 'user' | 'ai';
   content: string;
   citations: any[];
@@ -14,11 +15,11 @@ interface Message {
 
 function App() {
   const [messages, setMessages] = useState<Message[]>([
-    { id: 1, role: 'ai', content: 'Hello! I am your AI Health Assistant. How can I help you today?', citations: [], metric: null },
+    { id: 'msg-1', role: 'ai', content: 'Hello! I am your AI Health Assistant. How can I help you today?', citations: [], metric: null },
   ]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
-  const [editingMessageId, setEditingMessageId] = useState<number | null>(null);
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editInput, setEditInput] = useState('');
   const [images, setImages] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -38,13 +39,14 @@ function App() {
     if (!input.trim() && images.length === 0) return;
     
     const userMessage = input;
-    setMessages(prev => [...prev, { id: Date.now(), role: 'user', content: userMessage, citations: [], metric: null }]);
+    const userMsgId = crypto.randomUUID();
+    setMessages(prev => [...prev, { id: userMsgId, role: 'user', content: userMessage, citations: [], metric: null }]);
     setInput('');
     setImages([]);
     setIsStreaming(true);
     
     // Add placeholder for AI response
-    const aiMessageId = Date.now() + 1;
+    const aiMessageId = crypto.randomUUID();
     setMessages(prev => [...prev, { 
       id: aiMessageId, 
       role: 'ai', 
@@ -115,7 +117,7 @@ function App() {
     }
   };
 
-  const handleEditSave = async (msgId: number) => {
+  const handleEditSave = async (msgId: string) => {
     if (!editInput.trim()) return;
     
     // Find index of the message being edited
@@ -128,7 +130,7 @@ function App() {
     newMessages.push(updatedUserMsg);
     
     // Placeholder for AI
-    const aiMessageId = Date.now() + 1;
+    const aiMessageId = crypto.randomUUID();
     newMessages.push({ id: aiMessageId, role: 'ai', content: '', citations: [], metric: null });
     
     setMessages(newMessages);
@@ -281,7 +283,7 @@ function App() {
                         <strong>Warning:</strong> {msg.warningMessage}
                       </div>
                     )}
-                    {msg.content}
+                    <ReactMarkdown>{msg.content}</ReactMarkdown>
                     {msg.citations && msg.citations.length > 0 && (
                         <div style={{ marginTop: '1rem' }}>
                             {msg.citations.map((cit: any, i: number) => <Citation key={i} citation={cit} />)}
