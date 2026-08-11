@@ -319,15 +319,19 @@ class SessionStore:
             return cursor.rowcount > 0
 
     async def delete_session(self, session_id: str) -> bool:
-        """Archive session for auditability (alias for archive_session).
+        """Permanently delete a chat session and all its messages.
 
         Args:
-            session_id: Session ID to archive.
+            session_id: Session ID to delete.
 
         Returns:
-            True if session was archived.
+            True if session existed and was deleted.
         """
-        return await self.archive_session(session_id)
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+            cursor = await db.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
+            await db.commit()
+            return cursor.rowcount > 0
 
     async def get_cache_hash(self, file_path: str) -> Optional[str]:
         """Fetch cached content SHA-256 hash for a knowledge document file.

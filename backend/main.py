@@ -107,14 +107,14 @@ async def update_session_title(session_id: str, request: UpdateSessionRequest) -
 
 @app.delete("/api/session/{session_id}", status_code=status.HTTP_200_OK)
 async def delete_session(session_id: str) -> Dict[str, str]:
-    """Archive a chat session."""
+    """Permanently delete a chat session and its history."""
     deleted = await session_store.delete_session(session_id)
     if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Session {session_id} not found."
         )
-    return {"status": "archived", "session_id": session_id}
+    return {"status": "deleted", "session_id": session_id}
 
 
 @app.get("/api/session/{session_id}/history", status_code=status.HTTP_200_OK)

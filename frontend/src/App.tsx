@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Plus, Send, Paperclip, Edit2, Square, ChevronDown, ChevronUp } from 'lucide-react';
+import { Plus, Send, Paperclip, Edit2, Square, ChevronDown, ChevronUp, Trash2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { v4 as uuidv4 } from 'uuid';
 import './index.css';
@@ -285,6 +285,24 @@ function App() {
     setIsStreaming(false);
   };
 
+  const handleDeleteSession = async (e: React.MouseEvent, targetId: string) => {
+    e.stopPropagation();
+    try {
+      const res = await fetch(`/api/session/${targetId}`, { method: 'DELETE' });
+      if (res.ok) {
+        if (targetId === sessionId) {
+          const newId = `sess-${uuidv4()}`;
+          setSessionId(newId);
+          setMessages([initialMessage]);
+        } else {
+          fetchSessions();
+        }
+      }
+    } catch (err) {
+      console.error("Failed to delete session", err);
+    }
+  };
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
         const files = Array.from(e.target.files).slice(0, 5 - images.length);
@@ -349,11 +367,21 @@ function App() {
               onClick={() => setSessionId(s.session_id)}
               title={s.title}
             >
-              {s.title || 'Untitled Session'}
+              <span className="session-title">{s.title || 'Untitled Session'}</span>
+              <button
+                type="button" 
+                className="delete-session-btn" 
+                title="Delete session"
+                onClick={(e) => handleDeleteSession(e, s.session_id)}
+              >
+                <Trash2 size={14} />
+              </button>
             </div>
           ))}
           {sessionList.length === 0 && (
-            <div className="history-item active">Current Session</div>
+            <div className="history-item active">
+              <span className="session-title">Current Session</span>
+            </div>
           )}
         </div>
       </aside>
