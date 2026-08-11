@@ -172,10 +172,77 @@ body {
   border-bottom-right-radius: 4px;
 }
 
-.message.ai .bubble {
+.message.ai .bubble, .message.assistant .bubble {
   background: var(--bubble-ai);
   border: 1px solid var(--glass-border);
   border-bottom-left-radius: 4px;
+}
+
+.citations-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.75rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--glass-border);
+}
+
+.citation-chip-wrapper {
+  position: relative;
+  display: inline-block;
+}
+
+.citation-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: rgba(56, 189, 248, 0.1);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  color: var(--accent-primary);
+  padding: 0.2rem 0.55rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.citation-chip:hover {
+  background: rgba(56, 189, 248, 0.2);
+  border-color: var(--accent-primary);
+}
+
+.citation-popover {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  width: 280px;
+  background: #1e293b;
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  padding: 0.75rem;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+  z-index: 100;
+  animation: fadeIn 0.2s ease;
+}
+
+.citation-snippet {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.citation-link {
+  display: inline-block;
+  margin-top: 0.4rem;
+  font-size: 0.75rem;
+  color: var(--accent-primary);
+  text-decoration: none;
+  font-weight: 500;
+}
+.citation-link:hover {
+  text-decoration: underline;
 }
 
 .message-actions {

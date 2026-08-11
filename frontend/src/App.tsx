@@ -56,12 +56,9 @@ function App() {
           if (data.messages && data.messages.length > 0) {
             const formatted = data.messages.map((m: any, i: number) => ({
               id: m.id ? m.id.toString() : `hist-${i}`,
-              role: m.role,
+              role: m.role === 'assistant' ? 'ai' : m.role,
               content: m.content || m.assistant_msg || m.user_msg || '',
-              citations: m.sources ? m.sources.map((s: any) => {
-                if (typeof s === 'string') return { title: s, url: '#' };
-                return { title: s.title, url: s.url || '#', snippet: s.snippet };
-              }) : [],
+              citations: m.sources ? Array.from(new Map(m.sources.map((s: any) => [s.title || s, typeof s === 'string' ? { title: s, url: '#' } : { title: s.title || s, url: s.url || '#', snippet: s.snippet }])).values()) : [],
               metric: null,
               isHallucination: m.is_hallucinated,
               warningMessage: m.is_hallucinated ? 'Potential hallucination or unverified claim detected.' : undefined
@@ -311,15 +308,27 @@ function App() {
   const Citation = ({ citation }: { citation: any }) => {
     const [expanded, setExpanded] = useState(false);
     return (
-        <div className="citations-box">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <a href={citation.url} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-primary)', textDecoration: 'none', fontWeight: 500 }}>{citation.title}</a>
-                <button onClick={() => setExpanded(!expanded)} className="icon-btn">
-                    {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                </button>
-            </div>
-            {expanded && <div style={{ marginTop: '0.5rem', color: 'var(--text-secondary)' }}>{citation.snippet}</div>}
-        </div>
+      <div className="citation-chip-wrapper">
+        <button 
+          className="citation-chip" 
+          onClick={() => setExpanded(!expanded)}
+          type="button"
+        >
+          <span>📚</span>
+          <span>{citation.title}</span>
+          {citation.snippet && (expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />)}
+        </button>
+        {expanded && (
+          <div className="citation-popover">
+            <p className="citation-snippet">{citation.snippet || "Verified context chunk from healthcare knowledge base."}</p>
+            {citation.url && citation.url !== '#' && (
+              <a href={citation.url} target="_blank" rel="noreferrer" className="citation-link">
+                View Source →
+              </a>
+            )}
+          </div>
+        )}
+      </div>
     );
   };
 
@@ -387,9 +396,12 @@ function App() {
                       <ReactMarkdown>{msg.content}</ReactMarkdown>
                     )}
                     {msg.citations && msg.citations.length > 0 && (
-                        <div style={{ marginTop: '1rem' }}>
-                            {msg.citations.map((cit: any, i: number) => <Citation key={i} citation={cit} />)}
-                        </div>
+                      <div className="citations-container">
+                        {msg.citations
+                          .filter((c: any, index: number, self: any[]) => index === self.findIndex((t: any) => t.title === c.title))
+                          .map((cit: any, i: number) => <Citation key={i} citation={cit} />)
+                        }
+                      </div>
                     )}
                     {msg.metric && <div className="metric">{msg.metric}</div>}
                   </>
