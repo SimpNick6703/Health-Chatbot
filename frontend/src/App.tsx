@@ -169,7 +169,18 @@ function App() {
                     setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, metric: `Time-to-verified: ${parsed.time_to_verified || 'N/A'}` } : m));
                 }
                 if (parsed.type === "hallucination") {
-                    setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, isHallucination: true, warningMessage: parsed.message, content: parsed.raw_response } : m));
+                    const mappedCitations = (parsed.citations || []).map((s: any) => {
+                      if (typeof s === 'string') return { title: s, url: '#' };
+                      return { title: s.title || s, url: s.url || '#', snippet: s.snippet };
+                    });
+                    setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, isHallucination: true, warningMessage: parsed.message, content: parsed.raw_response, citations: mappedCitations } : m));
+                }
+                if (parsed.citations || parsed.sources) {
+                    const mappedCitations = (parsed.citations || parsed.sources).map((s: any) => {
+                      if (typeof s === 'string') return { title: s, url: '#' };
+                      return { title: s.title || s, url: s.url || '#', snippet: s.snippet };
+                    });
+                    setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, citations: mappedCitations } : m));
                 }
               } catch (e) {
                 // Ignore parse errors for incomplete chunks

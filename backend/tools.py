@@ -72,7 +72,7 @@ async def execute_tool_call(
 
     if tool_name == "search_knowledge_base":
         query = arguments.get("query", "")
-        chunks = await rag_manager.retrieve(query=query, session_id=session_id, top_k=3)
+        chunks = await rag_manager.retrieve(query=query, session_id=session_id, top_k=5)
     elif tool_name == "search_medlineplus_api":
         term = arguments.get("term", "")
         chunks = await medlineplus_client.search_health_topics(query=term, max_results=2)

@@ -221,9 +221,10 @@ class HallucinationDetector:
         headers = settings.get_portkey_headers(session_id)
 
         prompt: str = (
-            "You are a strict compliance auditor checking factual entailment.\n"
-            "Given the source context below, determine if every claim in the generated text is entailed (supported) by the context.\n"
-            "Respond ONLY with valid JSON: {\"is_hallucinated\": true} if any claim is ungrounded or unsupported, or {\"is_hallucinated\": false} if fully supported."
+            "You are a medical compliance auditor checking for dangerous, contradictory, or ungrounded medical claims.\n"
+            "Evaluate if the Generated Text contains major unsupported medical claims or directly contradicts the Source Context.\n"
+            "Note: General health guidance, standard medical disclaimers, markdown formatting, and conversational context are acceptable and should NOT be flagged.\n"
+            "Respond ONLY with valid JSON: {\"is_hallucinated\": true} if the text contains dangerous or contradicting ungrounded claims, or {\"is_hallucinated\": false} if it is consistent and safe."
         )
 
         user_content: str = f"Source Context:\n{context_str}\n\nGenerated Text:\n{response_text}"
