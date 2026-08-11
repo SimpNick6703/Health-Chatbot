@@ -45,6 +45,7 @@ class RetrievedChunk(BaseModel):
 
     content: str = Field(..., description="Text content of the retrieved chunk.")
     source: str = Field(..., description="Filename or API source identifier.")
+    source_type: Literal["local_kb", "medlineplus_api"] = Field(default="local_kb", description="Origin category.")
     score: float = Field(..., description="Similarity distance or relevance score.")
     heading: Optional[str] = Field(None, description="Section heading or topic title.")
     snippet_text: Optional[str] = Field(None, description="Granular text snippet excerpt.")

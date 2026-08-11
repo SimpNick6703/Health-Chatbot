@@ -247,7 +247,7 @@ class RAGManager:
             logger.info(f"Successfully indexed {len(chunk_objs)} granular chunks from {filename}.")
 
     async def retrieve(
-        self, query: str, session_id: str, top_k: int = 3
+        self, query: str, session_id: str, top_k: Optional[int] = None
     ) -> List[RetrievedChunk]:
         """Asynchronously retrieve relevant knowledge chunks from ChromaDB for a given query.
 
@@ -273,9 +273,10 @@ class RAGManager:
             )
             query_embedding = res.data[0].embedding
 
+            actual_top_k = top_k if top_k is not None else settings.RAG_TOP_K
             results = self.collection.query(
                 query_embeddings=[query_embedding],
-                n_results=top_k
+                n_results=actual_top_k
             )
 
             documents = results.get("documents", [[]])[0]
@@ -285,9 +286,12 @@ class RAGManager:
             retrieved: List[RetrievedChunk] = []
             for doc, meta, dist in zip(documents, metadatas, distances):
                 score = float(1.0 - dist) if dist is not None else 0.0
+                if score < settings.RAG_SIMILARITY_THRESHOLD:
+                    continue
                 retrieved.append(RetrievedChunk(
                     content=doc,
                     source=meta.get("source", "unknown"),
+                    source_type="local_kb",
                     score=max(score, 0.0),
                     heading=meta.get("heading", ""),
                     snippet_text=meta.get("snippet", doc[:200])

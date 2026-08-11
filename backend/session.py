@@ -139,6 +139,20 @@ class SessionStore:
             await db.commit()
             return cursor.rowcount > 0
 
+    async def create_session(self, session_id: str, title: str = "New Chat") -> None:
+        """Create a new session if it doesn't exist."""
+        now = datetime.now(timezone.utc).isoformat()
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """
+                INSERT INTO sessions (session_id, title, created_at, last_active_at, is_archived)
+                VALUES (?, ?, ?, ?, 0)
+                ON CONFLICT(session_id) DO NOTHING
+                """,
+                (session_id, title.strip(), now, now)
+            )
+            await db.commit()
+
     async def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Fetch session metadata by session ID.
 

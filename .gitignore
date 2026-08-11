@@ -33,6 +33,8 @@ Thumbs.db
 .DS_Store
 
 # Deploy
+.agents/*
+.claude/*
 deploy.ps1
 
 # Testing

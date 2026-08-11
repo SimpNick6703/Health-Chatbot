@@ -59,9 +59,15 @@ async def process_query(session_id: str, user_message: str) -> AsyncGenerator[Di
     # 0. Auto-title session if default
     try:
         sess_info = await session_store.get_session(session_id)
-        if sess_info and (not sess_info.get("title") or sess_info.get("title") == "New Chat"):
+        is_new = not sess_info
+        is_default_title = sess_info and (not sess_info.get("title") or sess_info.get("title") == "New Chat")
+        
+        if is_new or is_default_title:
             auto_title = user_message.strip()[:35] + ("..." if len(user_message.strip()) > 35 else "")
-            await session_store.update_session_title(session_id, auto_title)
+            if is_new:
+                await session_store.create_session(session_id, title=auto_title)
+            else:
+                await session_store.update_session_title(session_id, auto_title)
     except Exception as exc:
         logger.error(f"Auto-titling failed for session {session_id}: {exc}")
 
@@ -79,7 +85,7 @@ async def process_query(session_id: str, user_message: str) -> AsyncGenerator[Di
         yield {"event": "done", "data": json.dumps({"sources": [], "citations": []})}
         await session_store.save_turn(
             session_id=session_id,
-            user_msg=user_message,
+            user_msg=cleaned_text,
             assistant_msg=intent.response,
             intent=intent.category,
             flagged=True
@@ -95,7 +101,7 @@ async def process_query(session_id: str, user_message: str) -> AsyncGenerator[Di
         yield {"event": "done", "data": json.dumps({"sources": [], "citations": []})}
         await session_store.save_turn(
             session_id=session_id,
-            user_msg=user_message,
+            user_msg=cleaned_text,
             assistant_msg=refusal,
             intent="moderated",
             flagged=True
@@ -142,8 +148,7 @@ async def process_query(session_id: str, user_message: str) -> AsyncGenerator[Di
             tool_chunks.extend(retrieved)
 
             for chunk in retrieved:
-                is_medline = "medlineplus" in chunk.source.lower()
-                source_type = "medlineplus_api" if is_medline else "local_kb"
+                source_type = chunk.source_type
                 title = chunk.heading or chunk.source
                 snippet = chunk.snippet_text or chunk.content[:200]
                 citations.append(CitationItem(
@@ -161,9 +166,14 @@ async def process_query(session_id: str, user_message: str) -> AsyncGenerator[Di
 
     # 5. Stream Final LLM Token Response
     collected_response: str = ""
-    async for token in llm_client.generate_stream(messages, session_id):
-        collected_response += token
-        yield {"event": "token", "data": json.dumps({"token": token})}
+    try:
+        async for token in llm_client.generate_stream(messages, session_id):
+            collected_response += token
+            yield {"event": "token", "data": json.dumps({"token": token})}
+    except Exception as exc:
+        logger.error(f"LLM streaming request failed: {exc}")
+        yield {"event": "error", "data": json.dumps({"message": "Connection lost or streaming error."})}
+        return
 
     # 6. Hallucination Detection Verification Stage
     yield {"event": "status", "data": json.dumps({"stage": "checking_hallucination"})}
@@ -183,7 +193,7 @@ async def process_query(session_id: str, user_message: str) -> AsyncGenerator[Di
         warn_msg = "Potential hallucination or unverified claim detected."
         await session_store.save_turn(
             session_id=session_id,
-            user_msg=user_message,
+            user_msg=cleaned_text,
             assistant_msg=collected_response,
             intent="safe",
             sources=sources_payload,
@@ -213,7 +223,7 @@ async def process_query(session_id: str, user_message: str) -> AsyncGenerator[Di
     final_answer = collected_response + disclaimer
     await session_store.save_turn(
         session_id=session_id,
-        user_msg=user_message,
+        user_msg=cleaned_text,
         assistant_msg=final_answer,
         intent="safe",
         sources=sources_payload,

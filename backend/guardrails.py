@@ -3,6 +3,7 @@
 import re
 import json
 import logging
+import asyncio
 from typing import Dict, Any, Tuple, List, Optional
 import httpx
 from openai import AsyncOpenAI
@@ -18,7 +19,7 @@ class PIIDetector:
 
     PII_PATTERNS: Dict[str, str] = {
         "email": r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b",
-        "phone": r"(\+91[\-\s]?)?[6-9]\d{9}\b|\b\+\d{1,3}[\s\-]?\d{6,14}\b",
+        "phone": r"\b(\+91[\-\s]?)?[6-9]\d{9}\b|\b\+\d{1,3}[\s\-]?\d{6,14}\b",
         "ip_address": r"\b(?:\d{1,3}\.){3}\d{1,3}\b",
         "in_pan": r"\b[A-Z]{5}\d{4}[A-Z]\b",
         "in_aadhaar": r"\b\d{4}[\s\-]?\d{4}[\s\-]?\d{4}\b",
@@ -71,11 +72,7 @@ class PIIDetector:
 class IntentClassifier:
     """Classifies query intent into safety categories using deterministic pattern matching."""
 
-    EMERGENCY_KEYWORDS: List[str] = [
-        "heart attack", "can't breathe", "cannot breathe", "suicide", "overdose",
-        "choking", "unconscious", "bleeding heavily", "chest pain", "stroke",
-        "severe allergic reaction", "anaphylaxis", "poisoning"
-    ]
+    EMERGENCY_PATTERN: str = r"\b(i am|i'm|my|we are|we're|someone is|is having|help me|help|having a|experiencing)\b.*\b(heart attack|can't breathe|cannot breathe|suicide|overdose|choking|unconscious|bleeding heavily|chest pain|stroke|allergic reaction|anaphylaxis|poisoning)\b"
 
     DIAGNOSIS_PRESCRIPTION_KEYWORDS: List[str] = [
         "do i have", "what disease", "am i sick", "prescribe", "what medication",
@@ -109,9 +106,8 @@ class IntentClassifier:
         """
         lower_text: str = text.lower()
 
-        for kw in self.EMERGENCY_KEYWORDS:
-            if kw in lower_text:
-                return IntentResult(category="emergency", response=self.EMERGENCY_RESPONSE)
+        if re.search(self.EMERGENCY_PATTERN, lower_text):
+            return IntentResult(category="emergency", response=self.EMERGENCY_RESPONSE)
 
         for kw in self.DIAGNOSIS_PRESCRIPTION_KEYWORDS:
             if kw in lower_text:
@@ -159,31 +155,37 @@ class InputModerator:
 
         url: str = f"{settings.GUARDRAIL_BASE_URL.rstrip('/')}/moderations"
 
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.post(url, headers=headers, json=payload)
-                response.raise_for_status()
-                data = response.json()
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    response = await client.post(url, headers=headers, json=payload)
+                    response.raise_for_status()
+                    data = response.json()
 
-            results = data.get("results", [{}])[0]
-            categories: Dict[str, bool] = results.get("categories", {})
-            scores: Dict[str, float] = results.get("category_scores", {})
+                results = data.get("results", [{}])[0]
+                categories: Dict[str, bool] = results.get("categories", {})
+                scores: Dict[str, float] = results.get("category_scores", {})
 
-            flagged_categories: List[str] = [
-                cat for cat, is_flagged in categories.items()
-                if is_flagged and cat.lower() not in self.IGNORED_CATEGORIES
-            ]
+                flagged_categories: List[str] = [
+                    cat for cat, is_flagged in categories.items()
+                    if is_flagged and cat.lower() not in self.IGNORED_CATEGORIES
+                ]
 
-            blocked: bool = len(flagged_categories) > 0
-            return ModerationResult(
-                blocked=blocked,
-                flagged_categories=flagged_categories,
-                category_scores=scores
-            )
+                blocked: bool = len(flagged_categories) > 0
+                return ModerationResult(
+                    blocked=blocked,
+                    flagged_categories=flagged_categories,
+                    category_scores=scores
+                )
 
-        except Exception as exc:
-            logger.error(f"Moderation API request failed: {exc}. Falling back to unblocked state.")
-            return ModerationResult(blocked=False)
+            except Exception as exc:
+                if attempt < max_retries:
+                    logger.warning(f"Moderation API request failed (attempt {attempt+1}): {exc}. Retrying...")
+                    await asyncio.sleep(0.5)
+                else:
+                    logger.error(f"Moderation API request failed after {max_retries} retries: {exc}. Failing CLOSED.")
+                    return ModerationResult(blocked=True, flagged_categories=["system_error"], category_scores={"system_error": 1.0})
 
 
 class HallucinationDetector:
@@ -202,7 +204,7 @@ class HallucinationDetector:
         Returns:
             True if hallucination detected, False if clean/supported.
         """
-        if not response_text.strip() or not source_chunks:
+        if not response_text.strip():
             return False
 
         if not settings.JUDGE_BASE_URL or not settings.JUDGE_API_KEY:
@@ -225,28 +227,35 @@ class HallucinationDetector:
 
         user_content: str = f"Source Context:\n{context_str}\n\nGenerated Text:\n{response_text}"
 
-        try:
-            res = await client.chat.completions.create(
-                model=settings.JUDGE_MODEL_NAME,
-                messages=[
-                    {"role": "system", "content": prompt},
-                    {"role": "user", "content": user_content}
-                ],
-                temperature=0.0,
-                user=session_id,
-                extra_headers=headers
-            )
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            try:
+                res = await client.chat.completions.create(
+                    model=settings.JUDGE_MODEL_NAME,
+                    messages=[
+                        {"role": "system", "content": prompt},
+                        {"role": "user", "content": user_content}
+                    ],
+                    temperature=0.0,
+                    response_format={"type": "json_object"},
+                    user=session_id,
+                    extra_headers=headers
+                )
 
-            raw_content: Optional[str] = res.choices[0].message.content
-            if not raw_content:
-                return False
+                raw_content: Optional[str] = res.choices[0].message.content
+                if not raw_content:
+                    return False
 
-            parsed: Dict[str, Any] = json.loads(raw_content.strip())
-            return bool(parsed.get("is_hallucinated", False))
+                parsed: Dict[str, Any] = json.loads(raw_content.strip())
+                return bool(parsed.get("is_hallucinated", False))
 
-        except Exception as exc:
-            logger.error(f"Hallucination detection check failed: {exc}")
-            return False
+            except Exception as exc:
+                if attempt < max_retries:
+                    logger.warning(f"Hallucination detection check failed (attempt {attempt+1}): {exc}. Retrying...")
+                    await asyncio.sleep(0.5)
+                else:
+                    logger.error(f"Hallucination detection check failed after {max_retries} retries: {exc}. Failing CLOSED.")
+                    return True
 
 
 pii_detector = PIIDetector()

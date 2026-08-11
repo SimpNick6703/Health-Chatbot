@@ -81,6 +81,7 @@ class MedlinePlusClient:
                     chunks.append(RetrievedChunk(
                         content=content_text,
                         source=source_label,
+                        source_type="medlineplus_api",
                         score=0.9,
                         heading=title,
                         snippet_text=snippet,

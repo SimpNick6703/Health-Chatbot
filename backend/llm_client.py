@@ -82,7 +82,7 @@ class LLMClient:
 
         except Exception as exc:
             logger.error(f"LLM streaming request failed: {exc}")
-            yield f"\n[Error generating response: {str(exc)}]"
+            raise exc
 
 
 llm_client = LLMClient()
