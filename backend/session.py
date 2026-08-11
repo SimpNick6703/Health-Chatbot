@@ -252,7 +252,7 @@ class SessionStore:
         user_msg: str,
         assistant_msg: str,
         intent: str = "safe",
-        sources: Optional[List[str]] = None,
+        sources: Optional[List[Any]] = None,
         had_pii: bool = False,
         is_hallucinated: bool = False,
         flagged: bool = False
@@ -289,7 +289,7 @@ class SessionStore:
                 INSERT INTO messages (session_id, role, content, intent, sources, had_pii, is_hallucinated, flagged, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (session_id, "user", user_msg, intent, sources_str, pii_val, 0, flagged_val, now)
+                (session_id, "user", user_msg, intent, "[]", pii_val, 0, flagged_val, now)
             )
             await db.execute(
                 """

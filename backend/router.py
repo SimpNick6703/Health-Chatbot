@@ -223,7 +223,7 @@ async def process_query(
             user_msg=cleaned_text,
             assistant_msg=collected_response,
             intent="safe",
-            sources=sources_payload,
+            sources=citations_payload,
             had_pii=had_pii,
             is_hallucinated=True,
             flagged=True
@@ -240,7 +240,6 @@ async def process_query(
         }
         return
 
-    # 7. Verification Complete & Stream Disclaimer
     yield {"event": "status", "data": json.dumps({"stage": "verified"})}
 
     disclaimer = "\n\n*This is for informational purposes only. For medical advice or diagnosis, consult a professional.*"
@@ -253,7 +252,7 @@ async def process_query(
         user_msg=cleaned_text,
         assistant_msg=final_answer,
         intent="safe",
-        sources=sources_payload,
+        sources=citations_payload,
         had_pii=had_pii,
         is_hallucinated=False,
         flagged=False

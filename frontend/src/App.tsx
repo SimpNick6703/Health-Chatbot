@@ -50,7 +50,10 @@ function App() {
               id: m.id ? m.id.toString() : `hist-${i}`,
               role: m.role,
               content: m.content || m.assistant_msg || m.user_msg || '',
-              citations: m.sources ? m.sources.map((s: string) => ({ title: s, url: '#' })) : [],
+              citations: m.sources ? m.sources.map((s: any) => {
+                if (typeof s === 'string') return { title: s, url: '#' };
+                return { title: s.title, url: s.url || '#', snippet: s.snippet };
+              }) : [],
               metric: null,
               isHallucination: m.is_hallucinated,
               warningMessage: m.is_hallucinated ? 'Potential hallucination or unverified claim detected.' : undefined
