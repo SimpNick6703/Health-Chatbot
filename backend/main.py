@@ -75,7 +75,24 @@ app.add_middleware(
 @app.get("/health", status_code=status.HTTP_200_OK)
 async def health_check() -> Dict[str, str]:
     """Liveness and readiness check endpoint for Docker container healthchecks."""
-    return {"status": "healthy"}
+    db_status = "ok"
+    try:
+        if session_store.pool:
+            async with session_store.pool.acquire() as conn:
+                await conn.fetchval("SELECT 1")
+        else:
+            db_status = "disconnected"
+    except Exception as exc:
+        logger.error(f"Healthcheck DB ping failed: {exc}")
+        db_status = "unhealthy"
+
+    if db_status != "ok":
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Database connection pool error: {db_status}"
+        )
+
+    return {"status": "healthy", "database": "ok"}
 
 
 @app.get("/api/sessions", response_model=SessionListResponse, status_code=status.HTTP_200_OK)

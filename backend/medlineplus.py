@@ -3,7 +3,7 @@
 import re
 import logging
 import xml.etree.ElementTree as ET
-from typing import List
+from typing import List, Optional
 import httpx
 
 from models import RetrievedChunk
@@ -31,6 +31,15 @@ def strip_html_tags(text: str) -> str:
 class MedlinePlusClient:
     """Async client for querying the official MedlinePlus Web Services API (NIH/NLM)."""
 
+    def __init__(self) -> None:
+        self._client: Optional[httpx.AsyncClient] = None
+
+    async def get_client(self) -> httpx.AsyncClient:
+        """Get or initialize reusable HTTP client."""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=5.0)
+        return self._client
+
     async def search_health_topics(
         self, query: str, max_results: int = 2
     ) -> List[RetrievedChunk]:
@@ -52,10 +61,10 @@ class MedlinePlusClient:
         }
 
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(MEDLINEPLUS_API_URL, params=params)
-                response.raise_for_status()
-                xml_data = response.text
+            client = await self.get_client()
+            response = await client.get(MEDLINEPLUS_API_URL, params=params)
+            response.raise_for_status()
+            xml_data = response.text
 
             root = ET.fromstring(xml_data)
             chunks: List[RetrievedChunk] = []
