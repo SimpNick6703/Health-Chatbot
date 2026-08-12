@@ -42,6 +42,23 @@ function App() {
   const abortControllerRef = useRef<AbortController | null>(null);
   const sessionIdRef = useRef<string>(sessionId);
 
+  const formatMetrics = (m: any): string | null => {
+    if (!m) return null;
+    const parts: string[] = [];
+    if (typeof m.ttft_ms === 'number' && m.ttft_ms > 0) {
+      parts.push(`TTFT: ${m.ttft_ms}ms`);
+    }
+    if (typeof m.verification_ms === 'number' && m.verification_ms > 0) {
+      const vSec = (m.verification_ms / 1000).toFixed(1);
+      parts.push(`Verified: ${vSec}s`);
+    }
+    if (typeof m.total_ms === 'number' && m.total_ms > 0) {
+      const tSec = (m.total_ms / 1000).toFixed(1);
+      parts.push(`Total: ${tSec}s`);
+    }
+    return parts.length > 0 ? parts.join(' | ') : null;
+  };
+
   // Sync ref and local storage whenever sessionId changes
   useEffect(() => {
     sessionIdRef.current = sessionId;
@@ -62,7 +79,7 @@ function App() {
               content: m.content || m.assistant_msg || m.user_msg || '',
               citations: m.sources ? Array.from(new Map(m.sources.map((s: any) => [s.title || s, typeof s === 'string' ? { title: s, url: '#' } : { title: s.title || s, url: s.url || '#', snippet: s.snippet }])).values()) : [],
               statusLogs: m.status_logs || m.statusLogs || [],
-              metric: null,
+              metric: formatMetrics(m.metadata),
               isHallucination: m.is_hallucinated,
               warningMessage: m.is_hallucinated ? 'Potential hallucination or unverified claim detected.' : undefined
             }));
@@ -175,8 +192,9 @@ function App() {
                   aiContent += tokenVal;
                   setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, content: aiContent } : m));
                 }
-                if (parsed.stage === "verification_complete") {
-                    setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, metric: `Time-to-verified: ${parsed.time_to_verified || 'N/A'}` } : m));
+                if (parsed.metrics) {
+                    const formattedMetric = formatMetrics(parsed.metrics);
+                    setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, metric: formattedMetric } : m));
                 }
                 if (parsed.type === "hallucination") {
                     const mappedCitations = (parsed.citations || []).map((s: any) => {

@@ -69,6 +69,7 @@ class SessionStore:
                     intent VARCHAR(50),
                     sources JSONB DEFAULT '[]'::jsonb,
                     status_logs JSONB DEFAULT '[]'::jsonb,
+                    metadata JSONB DEFAULT '{}'::jsonb,
                     had_pii BOOLEAN DEFAULT FALSE,
                     is_hallucinated BOOLEAN DEFAULT FALSE,
                     flagged BOOLEAN DEFAULT FALSE,
@@ -78,6 +79,10 @@ class SessionStore:
 
             await conn.execute("""
                 ALTER TABLE messages ADD COLUMN IF NOT EXISTS status_logs JSONB DEFAULT '[]'::jsonb;
+            """)
+
+            await conn.execute("""
+                ALTER TABLE messages ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb;
             """)
 
             await conn.execute("""
@@ -241,7 +246,7 @@ class SessionStore:
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
                 """
-                SELECT id, role, content, sources, status_logs, is_hallucinated, created_at FROM messages
+                SELECT id, role, content, sources, status_logs, metadata, is_hallucinated, created_at FROM messages
                 WHERE session_id = $1
                 ORDER BY id ASC
                 """,
@@ -271,12 +276,24 @@ class SessionStore:
             else:
                 status_logs_list = []
 
+            metadata_val = r["metadata"]
+            if isinstance(metadata_val, str):
+                try:
+                    metadata_dict = json.loads(metadata_val)
+                except Exception:
+                    metadata_dict = {}
+            elif isinstance(metadata_val, dict):
+                metadata_dict = metadata_val
+            else:
+                metadata_dict = {}
+
             messages.append({
                 "id": str(r["id"]),
                 "role": r["role"],
                 "content": r["content"],
                 "sources": sources_list,
                 "status_logs": status_logs_list,
+                "metadata": metadata_dict,
                 "is_hallucinated": bool(r["is_hallucinated"]),
                 "created_at": str(r["created_at"])
             })
@@ -300,6 +317,7 @@ class SessionStore:
         intent: str = "safe",
         sources: Optional[List[Any]] = None,
         status_logs: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         had_pii: bool = False,
         is_hallucinated: bool = False,
         flagged: bool = False
@@ -309,6 +327,7 @@ class SessionStore:
             return
         sources_json = json.dumps(sources or [])
         status_logs_json = json.dumps(status_logs or [])
+        metadata_json = json.dumps(metadata or {})
         async with self.pool.acquire() as conn:
             async with conn.transaction():
                 await conn.execute(
@@ -321,17 +340,17 @@ class SessionStore:
                 )
                 await conn.execute(
                     """
-                    INSERT INTO messages (session_id, role, content, intent, sources, status_logs, had_pii, is_hallucinated, flagged)
-                    VALUES ($1, 'user', $2, $3, '[]'::jsonb, '[]'::jsonb, $4, FALSE, $5)
+                    INSERT INTO messages (session_id, role, content, intent, sources, status_logs, metadata, had_pii, is_hallucinated, flagged)
+                    VALUES ($1, 'user', $2, $3, '[]'::jsonb, '[]'::jsonb, '{}'::jsonb, $4, FALSE, $5)
                     """,
                     session_id, user_msg, intent, had_pii, flagged
                 )
                 await conn.execute(
                     """
-                    INSERT INTO messages (session_id, role, content, intent, sources, status_logs, had_pii, is_hallucinated, flagged)
-                    VALUES ($1, 'assistant', $2, $3, $4::jsonb, $5::jsonb, FALSE, $6, $7)
+                    INSERT INTO messages (session_id, role, content, intent, sources, status_logs, metadata, had_pii, is_hallucinated, flagged)
+                    VALUES ($1, 'assistant', $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, FALSE, $7, $8)
                     """,
-                    session_id, assistant_msg, intent, sources_json, status_logs_json, is_hallucinated, flagged
+                    session_id, assistant_msg, intent, sources_json, status_logs_json, metadata_json, is_hallucinated, flagged
                 )
 
     async def delete_session(self, session_id: str) -> bool:

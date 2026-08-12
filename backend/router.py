@@ -1,7 +1,6 @@
-"""Query processing router pipeline orchestrating guardrails, OpenAI tool calling, LLM streaming, and structured SSE events."""
-
 import os
 import json
+import time
 import logging
 import asyncio
 from typing import List, Dict, Any, AsyncGenerator, Optional
@@ -72,6 +71,9 @@ async def process_query(
     Yields:
         Dictionary objects representing SSE events (event, data).
     """
+    t_start = time.perf_counter()
+    first_token_time: Optional[float] = None
+
     # 0. Auto-title session if default
     try:
         sess_info = await session_store.get_session(session_id)
@@ -204,6 +206,8 @@ async def process_query(
     collected_response: str = ""
     try:
         async for token in llm_client.generate_stream(messages, session_id):
+            if first_token_time is None:
+                first_token_time = time.perf_counter()
             collected_response += token
             yield {"event": "token", "data": json.dumps({"token": token})}
     except asyncio.CancelledError:
@@ -217,17 +221,29 @@ async def process_query(
             yield {"event": "error", "data": json.dumps({"message": "Connection lost or streaming error."})}
         return
 
+    ttft_ms = int((first_token_time - t_start) * 1000) if first_token_time else 0
+
     # 6. Hallucination Detection Verification Stage
     s_audit = "Auditing answer quality with Judge LLM..."
     status_logs.append(s_audit)
     yield {"event": "status", "data": json.dumps({"stage": "auditing", "label": s_audit})}
 
+    t_verify_start = time.perf_counter()
     chunk_texts = [c.content for c in tool_chunks]
     is_hallucinated = await hallucination_detector.detect_hallucination(
         response_text=collected_response,
         source_chunks=chunk_texts,
         session_id=session_id
     )
+    t_verify_end = time.perf_counter()
+    verification_ms = int((t_verify_end - t_verify_start) * 1000)
+
+    total_ms = int((time.perf_counter() - t_start) * 1000)
+    metrics = {
+        "ttft_ms": ttft_ms,
+        "verification_ms": verification_ms,
+        "total_ms": total_ms
+    }
 
     citations_payload = [c.model_dump() for c in citations]
     sources_payload = list(set(c.title for c in citations))
@@ -242,6 +258,7 @@ async def process_query(
             intent="safe",
             sources=citations_payload,
             status_logs=status_logs,
+            metadata=metrics,
             had_pii=had_pii,
             is_hallucinated=True,
             flagged=True
@@ -253,7 +270,8 @@ async def process_query(
                 "is_hallucinated": True,
                 "message": warn_msg,
                 "raw_response": collected_response,
-                "citations": citations_payload
+                "citations": citations_payload,
+                "metrics": metrics
             })
         }
         return
@@ -270,6 +288,7 @@ async def process_query(
         intent="safe",
         sources=citations_payload,
         status_logs=status_logs,
+        metadata=metrics,
         had_pii=had_pii,
         is_hallucinated=False,
         flagged=False
@@ -278,6 +297,7 @@ async def process_query(
         "event": "done",
         "data": json.dumps({
             "sources": sources_payload,
-            "citations": citations_payload
+            "citations": citations_payload,
+            "metrics": metrics
         })
     }
