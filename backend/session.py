@@ -68,11 +68,16 @@ class SessionStore:
                     content TEXT NOT NULL,
                     intent VARCHAR(50),
                     sources JSONB DEFAULT '[]'::jsonb,
+                    status_logs JSONB DEFAULT '[]'::jsonb,
                     had_pii BOOLEAN DEFAULT FALSE,
                     is_hallucinated BOOLEAN DEFAULT FALSE,
                     flagged BOOLEAN DEFAULT FALSE,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
+            """)
+
+            await conn.execute("""
+                ALTER TABLE messages ADD COLUMN IF NOT EXISTS status_logs JSONB DEFAULT '[]'::jsonb;
             """)
 
             await conn.execute("""
@@ -236,7 +241,7 @@ class SessionStore:
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
                 """
-                SELECT id, role, content, sources, is_hallucinated, created_at FROM messages
+                SELECT id, role, content, sources, status_logs, is_hallucinated, created_at FROM messages
                 WHERE session_id = $1
                 ORDER BY id ASC
                 """,
@@ -255,11 +260,23 @@ class SessionStore:
             else:
                 sources_list = []
 
+            status_logs_val = r["status_logs"]
+            if isinstance(status_logs_val, str):
+                try:
+                    status_logs_list = json.loads(status_logs_val)
+                except Exception:
+                    status_logs_list = []
+            elif isinstance(status_logs_val, list):
+                status_logs_list = status_logs_val
+            else:
+                status_logs_list = []
+
             messages.append({
                 "id": str(r["id"]),
                 "role": r["role"],
                 "content": r["content"],
                 "sources": sources_list,
+                "status_logs": status_logs_list,
                 "is_hallucinated": bool(r["is_hallucinated"]),
                 "created_at": str(r["created_at"])
             })
@@ -282,6 +299,7 @@ class SessionStore:
         assistant_msg: str,
         intent: str = "safe",
         sources: Optional[List[Any]] = None,
+        status_logs: Optional[List[str]] = None,
         had_pii: bool = False,
         is_hallucinated: bool = False,
         flagged: bool = False
@@ -290,6 +308,7 @@ class SessionStore:
         if not self.pool:
             return
         sources_json = json.dumps(sources or [])
+        status_logs_json = json.dumps(status_logs or [])
         async with self.pool.acquire() as conn:
             async with conn.transaction():
                 await conn.execute(
@@ -302,17 +321,17 @@ class SessionStore:
                 )
                 await conn.execute(
                     """
-                    INSERT INTO messages (session_id, role, content, intent, sources, had_pii, is_hallucinated, flagged)
-                    VALUES ($1, 'user', $2, $3, '[]'::jsonb, $4, FALSE, $5)
+                    INSERT INTO messages (session_id, role, content, intent, sources, status_logs, had_pii, is_hallucinated, flagged)
+                    VALUES ($1, 'user', $2, $3, '[]'::jsonb, '[]'::jsonb, $4, FALSE, $5)
                     """,
                     session_id, user_msg, intent, had_pii, flagged
                 )
                 await conn.execute(
                     """
-                    INSERT INTO messages (session_id, role, content, intent, sources, had_pii, is_hallucinated, flagged)
-                    VALUES ($1, 'assistant', $2, $3, $4::jsonb, FALSE, $5, $6)
+                    INSERT INTO messages (session_id, role, content, intent, sources, status_logs, had_pii, is_hallucinated, flagged)
+                    VALUES ($1, 'assistant', $2, $3, $4::jsonb, $5::jsonb, FALSE, $6, $7)
                     """,
-                    session_id, assistant_msg, intent, sources_json, is_hallucinated, flagged
+                    session_id, assistant_msg, intent, sources_json, status_logs_json, is_hallucinated, flagged
                 )
 
     async def delete_session(self, session_id: str) -> bool:

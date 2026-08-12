@@ -61,6 +61,7 @@ function App() {
               role: m.role === 'assistant' ? 'ai' : m.role,
               content: m.content || m.assistant_msg || m.user_msg || '',
               citations: m.sources ? Array.from(new Map(m.sources.map((s: any) => [s.title || s, typeof s === 'string' ? { title: s, url: '#' } : { title: s.title || s, url: s.url || '#', snippet: s.snippet }])).values()) : [],
+              statusLogs: m.status_logs || m.statusLogs || [],
               metric: null,
               isHallucination: m.is_hallucinated,
               warningMessage: m.is_hallucinated ? 'Potential hallucination or unverified claim detected.' : undefined

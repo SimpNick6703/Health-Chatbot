@@ -87,8 +87,12 @@ async def process_query(
     except Exception as exc:
         logger.error(f"Auto-titling failed for session {session_id}: {exc}")
 
+    status_logs: List[str] = []
+
     # 1. PII Redaction & Moderation
-    yield {"event": "status", "data": json.dumps({"stage": "safety_check", "label": "Checking input safety and moderation rules..."})}
+    s1 = "Checking input safety and moderation rules..."
+    status_logs.append(s1)
+    yield {"event": "status", "data": json.dumps({"stage": "safety_check", "label": s1})}
     cleaned_text, had_pii, pii_details = pii_detector.detect_and_redact(user_message)
     if had_pii:
         logger.info(f"Session {session_id}: PII detected and redacted.")
@@ -105,6 +109,7 @@ async def process_query(
             user_msg=cleaned_text,
             assistant_msg=intent.response,
             intent=intent.category,
+            status_logs=status_logs,
             flagged=True
         )
         return
@@ -123,6 +128,7 @@ async def process_query(
             user_msg=cleaned_text,
             assistant_msg=refusal,
             intent="moderated",
+            status_logs=status_logs,
             flagged=True
         )
         return
@@ -132,7 +138,9 @@ async def process_query(
     history = await session_store.get_history(session_id, limit=settings.SESSION_MAX_TURNS)
     messages = format_system_messages(SYSTEM_PROMPT_CONTENT, history, cleaned_text, images)
 
-    yield {"event": "status", "data": json.dumps({"stage": "tool_search", "label": "Searching health knowledge resources..."})}
+    s2 = "Searching health knowledge resources..."
+    status_logs.append(s2)
+    yield {"event": "status", "data": json.dumps({"stage": "tool_search", "label": s2})}
     tool_message = await llm_client.generate_tool_completion(messages, await get_openai_tools(), session_id)
     citations: List[CitationItem] = []
     tool_chunks: List[RetrievedChunk] = []
@@ -157,7 +165,9 @@ async def process_query(
         for tc in tool_message.tool_calls:
             tool_name = tc.function.name
             readable_tool = "MedlinePlus API" if "medlineplus" in tool_name else "local knowledge base"
-            yield {"event": "status", "data": json.dumps({"stage": "tool_exec", "label": f"Executing search query on {readable_tool}..."})}
+            s_exec = f"Executing search query on {readable_tool}..."
+            status_logs.append(s_exec)
+            yield {"event": "status", "data": json.dumps({"stage": "tool_exec", "label": s_exec})}
             try:
                 args = json.loads(tc.function.arguments)
             except Exception:
@@ -165,6 +175,10 @@ async def process_query(
 
             output_text, retrieved = await execute_tool_call(tool_name, args, session_id)
             tool_chunks.extend(retrieved)
+
+            if retrieved:
+                s_ret = f"Retrieved {len(retrieved)} verified context chunks."
+                status_logs.append(s_ret)
 
             for chunk in retrieved:
                 source_type = chunk.source_type
@@ -184,7 +198,9 @@ async def process_query(
             })
 
     # 5. Stream Final LLM Token Response
-    yield {"event": "status", "data": json.dumps({"stage": "generating", "label": "Generating response..."})}
+    s_gen = "Generating response..."
+    status_logs.append(s_gen)
+    yield {"event": "status", "data": json.dumps({"stage": "generating", "label": s_gen})}
     collected_response: str = ""
     try:
         async for token in llm_client.generate_stream(messages, session_id):
@@ -202,7 +218,9 @@ async def process_query(
         return
 
     # 6. Hallucination Detection Verification Stage
-    yield {"event": "status", "data": json.dumps({"stage": "auditing", "label": "Auditing answer quality with Judge LLM..."})}
+    s_audit = "Auditing answer quality with Judge LLM..."
+    status_logs.append(s_audit)
+    yield {"event": "status", "data": json.dumps({"stage": "auditing", "label": s_audit})}
 
     chunk_texts = [c.content for c in tool_chunks]
     is_hallucinated = await hallucination_detector.detect_hallucination(
@@ -223,6 +241,7 @@ async def process_query(
             assistant_msg=collected_response,
             intent="safe",
             sources=citations_payload,
+            status_logs=status_logs,
             had_pii=had_pii,
             is_hallucinated=True,
             flagged=True
@@ -239,7 +258,9 @@ async def process_query(
         }
         return
 
-    yield {"event": "status", "data": json.dumps({"stage": "verified", "label": "Response verified."})}
+    s_ver = "Response verified."
+    status_logs.append(s_ver)
+    yield {"event": "status", "data": json.dumps({"stage": "verified", "label": s_ver})}
 
     # 8. Persist Turn & Yield Done Event
     await session_store.save_turn(
@@ -248,6 +269,7 @@ async def process_query(
         assistant_msg=collected_response,
         intent="safe",
         sources=citations_payload,
+        status_logs=status_logs,
         had_pii=had_pii,
         is_hallucinated=False,
         flagged=False
