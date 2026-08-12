@@ -180,22 +180,38 @@ body {
 }
 
 .bubble {
-  padding: 0.75rem 1rem;
-  border-radius: 12px;
-  line-height: 1.5;
+  padding: 0.65rem 0.95rem;
+  border-radius: 10px;
+  line-height: 1.45;
   position: relative;
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-  white-space: pre-wrap;
   word-break: break-word;
 }
+.message.user .bubble {
+  white-space: pre-wrap;
+}
 .bubble p {
-  margin: 0.35em 0;
+  margin: 0.25em 0;
 }
 .bubble p:first-child {
   margin-top: 0;
 }
 .bubble p:last-child {
   margin-bottom: 0;
+}
+.bubble ul, .bubble ol {
+  margin: 0.25em 0;
+  padding-left: 1.25rem;
+}
+.bubble li {
+  margin: 0.15em 0;
+}
+.bubble h1, .bubble h2, .bubble h3, .bubble h4 {
+  margin: 0.35em 0 0.15em 0;
+  line-height: 1.25;
+}
+.bubble h1:first-child, .bubble h2:first-child, .bubble h3:first-child, .bubble h4:first-child {
+  margin-top: 0;
 }
 
 .message.user .bubble {
