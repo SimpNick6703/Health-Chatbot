@@ -52,14 +52,6 @@ A production-grade, high-performance healthcare chatbot built with **FastAPI**, 
 
 ---
 
-## Deployment Script
-
-| Script | Command | Purpose |
-|---|---|---|
-| **Deploy** | `powershell -ExecutionPolicy Bypass -File .\deploy.ps1` | Commits, pushes to main, SSHs into remote host (HP-AIO), pulls latest code, and rebuilds containers. |
-
----
-
 ## Quickstart Guide
 
 ### 1. Environment Setup
