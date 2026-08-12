@@ -78,6 +78,9 @@ class LLMClient:
             async for chunk in stream:
                 if chunk.choices and len(chunk.choices) > 0:
                     delta = chunk.choices[0].delta
+                    reasoning = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
+                    if reasoning:
+                        yield f"<think>{reasoning}</think>"
                     if delta.content:
                         yield delta.content
 
