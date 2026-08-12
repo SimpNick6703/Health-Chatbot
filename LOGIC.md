@@ -1,10 +1,10 @@
 # Query Processing & Safety Logic Documentation
 
-This document explains the end-to-end query processing pipeline, multi-layer guardrail design, tool-calling (function calling) architecture, session management strategy, and security verification approach.
+This document explains the end-to-end query processing pipeline, multi-layer guardrail design, tool-calling architecture, reasoning extraction, performance metrics tracking, session management, and security verification approach.
 
 ---
 
-## 1. Multi-Layer Guardrail & Tool-Calling Architecture
+## 1. Multi-Layer Guardrail & Pipeline Flow
 
 ```mermaid
 flowchart TD
@@ -13,10 +13,10 @@ flowchart TD
     C --> D[3. Input Moderation]
     D --> E[4. LLM Tool Selection Round]
     E -->|Tool Call Requested| F[5. Tool Execution: search_knowledge_base / search_medlineplus_api]
-    F --> G[6. Streaming LLM Final Answer]
+    F --> G[6. Streaming LLM Final Answer & Reasoning Tokens]
     E -->|Direct Response| G
-    G --> H[7. Hallucination Detector]
-    H -->|Factually Verified| I[8. Stream Done + Structured Citations]
+    G --> H[7. Hallucination Detector Judge & Latency Calculator]
+    H -->|Factually Verified| I[8. Stream Done + Citations + Performance Metrics]
     H -->|Unverified / Flagged| J[8. Collapsed Hallucination Warning UX]
 ```
 
@@ -39,7 +39,7 @@ flowchart TD
   - **Safe**: Passes to moderation and processing pipeline.
 
 ### Stage 3: Input Moderation (`InputModerator`)
-- **Execution**: Async `httpx` POST to external moderation API (`mistral-moderation-latest`).
+- **Execution**: Async POST to external moderation API (`mistral-moderation-latest`).
 - **Ignored Categories**: `{"health", "pii"}` (since medical questions naturally discuss body symptoms).
 - **Enforced Categories**: `sexual`, `violence_and_threats`, `selfharm`, `hate_and_discrimination`, `dangerous`, `criminal`, `jailbreaking`.
 - **Portkey Metadata**: Passes `x-portkey-metadata` header containing `{"_user": "<session_id>"}`.
@@ -47,20 +47,21 @@ flowchart TD
 ### Stage 4: OpenAI Tool Selection & Execution (`tools.py`)
 Instead of pre-retrieval prompt stuffing, the LLM receives JSON Schema tool specifications:
 1. `search_knowledge_base`: Queries ChromaDB vector database over granular ~300-character passages using Gemini Embeddings (`gemini-embedding-2-preview`) in cosine distance space.
-2. `search_medlineplus_api`: Queries the official NIH / MedlinePlus Developer Web Services API (`https://wsearch.nlm.nih.gov/ws/query?db=healthTopics&term={term}`) for live health topic summaries and official government URLs.
+2. `search_medlineplus_api`: Queries the official NIH / MedlinePlus Developer Web Services API (`https://wsearch.nlm.nih.gov/ws/query?db=healthTopics&term={term}`) for live health topic summaries and official government URLs. Reuses an `httpx.AsyncClient` session with a 5s timeout.
 - **Execution**: If the model decides information is required, it returns `tool_calls`. The backend executes tool calls asynchronously, extracts `CitationItem` objects with exact snippet excerpts and direct URLs, and feeds tool response messages back into context.
 
-### Stage 5: Streaming Response Generation & Disclaimer
+### Stage 5: Reasoning Token Extraction & Response Streaming
 - Streams token-by-token text to the client via Server-Sent Events (SSE).
+- Captures model reasoning tokens (`delta.reasoning_content` or `<think>...</think>` tags) and streams status steps (`safety_check`, `tool_search`, `tool_exec`, `generating`, `auditing`, `verified`).
 - Direct queries (greetings, emergency refusals) bypass tools entirely for instant (< 1s) responses.
 
-### Stage 6: Hallucination Detector (`HallucinationDetector`) & Collapsed UX
-- **Execution**: Async LLM-as-a-Judge NLI entailment evaluation checking sentence factual support against retrieved tool snippets.
-- **Collapsed Hallucination Response UX**:
-  - If `is_hallucinated == True`, the generated response is **not deleted**.
-  - The UI renders a warning banner (`Warning: Potential hallucination or unverified claim detected.`) and wraps the response inside a collapsed container:
-    `st.expander("View unverified response (Use with caution)")`
-  - Accompanied by advice: *"This response could not be fully verified against official medical knowledge sources. Please consult a licensed healthcare provider."*
+### Stage 6: Hallucination Detector & Performance Metrics
+- **Hallucination Judge**: Async LLM-as-a-Judge NLI entailment evaluation checking sentence factual support against retrieved tool snippets.
+- **Latency Instrumentation**:
+  - **TTFT**: Time-To-First-Token latency from query submission to first token chunk.
+  - **Verified**: Judge LLM hallucination evaluation duration.
+  - **Total**: End-to-end pipeline execution time.
+- **Persistence**: Metrics dictionary is persisted in PostgreSQL `messages.metadata` JSONB column and emitted in SSE `done` event.
 
 ---
 
@@ -68,7 +69,7 @@ Instead of pre-retrieval prompt stuffing, the LLM receives JSON Schema tool spec
 
 To satisfy developer web service guidelines (MedlinePlus / NLM) and optimize retrieval speed:
 1. On startup, `rag_manager.ingest_knowledge_files` computes the SHA-256 hash of each file in `backend/knowledge/`.
-2. Hashing is checked against the SQLite `knowledge_cache` table.
+2. Hashing is checked against the PostgreSQL `knowledge_cache` table.
 3. If content hash matches, ingestion skips re-embedding.
 4. If changed or new, Markdown files are split into granular ~300-character (~50 word) passages on section (`###`) and bullet boundaries.
 5. Passages are embedded via `gemini-embedding-2-preview`, indexed in ChromaDB with heading/snippet metadata, and updated in `knowledge_cache`.
@@ -84,19 +85,19 @@ Across all backend components:
 
 ---
 
-## 4. Multi-Session Management & Auditability
+## 4. Multi-Session Management & PostgreSQL Auditability
 
 To maintain full auditability while providing seamless UI chat session switching:
 1. **Lazy Session Creation**:
-   - Page load or clicking "+ Start New Chat" generates a client UUID without creating empty records in SQLite.
+   - Page load or clicking "+ Start New Chat" generates a client UUID without creating empty records in PostgreSQL.
    - The session row is created automatically on execution of the first message turn.
-2. **Auto-Titling & Title Editing**:
+2. **Dynamic Real-Time Auto-Titling**:
    - The query router inspects initial session turns and auto-populates `title` from the query topic string.
-   - Users can update session titles via `PATCH /api/session/{session_id}`.
-3. **Inner Join Query Filter**:
-   - `list_active_sessions` executes an `INNER JOIN` against `messages`, strictly excluding 0-message sessions from the Chat History navigation list.
+   - The frontend triggers `fetchSessions()` on the first stream chunk and on completion, dynamically rendering the new title in the sidebar without page refresh.
+3. **Structured JSONB Columns**:
+   - PostgreSQL `messages` table stores `sources`, `status_logs`, and `metadata` in native `JSONB` format for efficient querying and history restoration.
 4. **Soft Deletion / Archiving**:
-   - Deleting a chat sets `is_archived = 1` and `archived_at = <ISO_TIMESTAMP>` in SQLite `sessions`, keeping historical turns available for audit against Portkey observability traces.
+   - Deleting a chat sets `is_archived = true` and `archived_at = CURRENT_TIMESTAMP` in PostgreSQL `sessions`, keeping historical turns available for audit against Portkey observability traces.
 
 ---
 
