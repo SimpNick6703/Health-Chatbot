@@ -161,9 +161,15 @@ function App() {
       
       if (reader) {
         let aiContent = "";
+        let hasUpdatedSessionList = false;
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
+          
+          if (!hasUpdatedSessionList) {
+            hasUpdatedSessionList = true;
+            fetchSessions();
+          }
           
           const chunk = decoder.decode(value, { stream: true });
           const lines = chunk.split("\n");
@@ -224,6 +230,7 @@ function App() {
     } finally {
       setIsStreaming(false);
       abortControllerRef.current = null;
+      fetchSessions();
     }
   };
 
