@@ -103,7 +103,8 @@ class SessionStore:
 
     async def migrate_from_sqlite_if_needed(self) -> None:
         """Migrate existing chat sessions and messages from SQLite to PostgreSQL if Postgres is empty."""
-        if not self.pool or not os.path.exists(settings.SQLITE_PATH):
+        sqlite_path = getattr(settings, "SQLITE_PATH", "/data/sessions.db")
+        if not self.pool or not os.path.exists(sqlite_path):
             return
 
         async with self.pool.acquire() as conn:
@@ -112,9 +113,9 @@ class SessionStore:
                 logger.info("PostgreSQL already contains session records. Skipping SQLite data migration.")
                 return
 
-        logger.info(f"PostgreSQL database is empty. Starting automated migration from SQLite ({settings.SQLITE_PATH})...")
+        logger.info(f"PostgreSQL database is empty. Starting automated migration from SQLite ({sqlite_path})...")
         try:
-            async with aiosqlite.connect(settings.SQLITE_PATH) as sqlite_db:
+            async with aiosqlite.connect(sqlite_path) as sqlite_db:
                 async with sqlite_db.execute("SELECT session_id, title, created_at, last_active_at, is_archived FROM sessions") as cursor:
                     sqlite_sessions = await cursor.fetchall()
 
