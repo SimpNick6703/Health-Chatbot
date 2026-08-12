@@ -241,52 +241,11 @@ async def process_query(
 
     yield {"event": "status", "data": json.dumps({"stage": "verified", "label": "Response verified."})}
 
-    chunk_texts = [c.content for c in tool_chunks]
-    is_hallucinated = await hallucination_detector.detect_hallucination(
-        response_text=collected_response,
-        source_chunks=chunk_texts,
-        session_id=session_id
-    )
-
-    citations_payload = [c.model_dump() for c in citations]
-    sources_payload = list(set(c.title for c in citations))
-
-    if is_hallucinated:
-        logger.warning(f"Session {session_id}: Hallucination detected.")
-        warn_msg = "Potential hallucination or unverified claim detected."
-        await session_store.save_turn(
-            session_id=session_id,
-            user_msg=cleaned_text,
-            assistant_msg=collected_response,
-            intent="safe",
-            sources=citations_payload,
-            had_pii=had_pii,
-            is_hallucinated=True,
-            flagged=True
-        )
-        yield {
-            "event": "error",
-            "data": json.dumps({
-                "type": "hallucination",
-                "is_hallucinated": True,
-                "message": warn_msg,
-                "raw_response": collected_response,
-                "citations": citations_payload
-            })
-        }
-        return
-
-    yield {"event": "status", "data": json.dumps({"stage": "verified"})}
-
-    disclaimer = "\n\n*This is for informational purposes only. For medical advice or diagnosis, consult a professional.*"
-    yield {"event": "token", "data": json.dumps({"token": disclaimer})}
-
     # 8. Persist Turn & Yield Done Event
-    final_answer = collected_response + disclaimer
     await session_store.save_turn(
         session_id=session_id,
         user_msg=cleaned_text,
-        assistant_msg=final_answer,
+        assistant_msg=collected_response,
         intent="safe",
         sources=citations_payload,
         had_pii=had_pii,

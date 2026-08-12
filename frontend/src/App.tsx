@@ -335,12 +335,23 @@ function App() {
     }
   };
 
-  const ThinkingBadge = ({ logs, currentStatus }: { logs?: string[]; currentStatus?: string }) => {
+  const parseMessageContent = (rawContent: string) => {
+    if (!rawContent) return { thinkingText: null, cleanContent: '' };
+    const thinkMatch = rawContent.match(/<(think|thinking)>([\s\S]*?)(?:<\/(think|thinking)>|$)/i);
+    if (thinkMatch) {
+      const thinkingText = thinkMatch[2].trim();
+      const cleanContent = rawContent.replace(/<(think|thinking)>[\s\S]*?(?:<\/(think|thinking)>|$)/gi, '').trim();
+      return { thinkingText, cleanContent };
+    }
+    return { thinkingText: null, cleanContent: rawContent };
+  };
+
+  const ThinkingBadge = ({ logs, currentStatus, reasoningText }: { logs?: string[]; currentStatus?: string; reasoningText?: string | null }) => {
     const [expanded, setExpanded] = useState(false);
-    if ((!logs || logs.length === 0) && !currentStatus) return null;
+    if ((!logs || logs.length === 0) && !currentStatus && !reasoningText) return null;
 
     const displayLogs = logs && logs.length > 0 ? logs : (currentStatus ? [currentStatus] : []);
-    const lastStatus = currentStatus || displayLogs[displayLogs.length - 1];
+    const lastStatus = currentStatus || (displayLogs.length > 0 ? displayLogs[displayLogs.length - 1] : "thinking");
 
     return (
       <div className="thinking-container">
@@ -350,16 +361,25 @@ function App() {
           onClick={() => setExpanded(!expanded)}
         >
           <span className="thinking-dot"></span>
-          <span className="thinking-title">Thinking: {lastStatus}</span>
+          <span className="thinking-title">Thinking process: {lastStatus}</span>
           {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
         </button>
         {expanded && (
           <div className="thinking-logs">
-            {displayLogs.map((log, idx) => (
-              <div key={idx} className="thinking-log-item">
-                - {log}
+            {displayLogs.length > 0 && (
+              <div className="thinking-steps">
+                {displayLogs.map((log, idx) => (
+                  <div key={idx} className="thinking-log-item">
+                    <ReactMarkdown>{log.startsWith('-') ? log : `- ${log}`}</ReactMarkdown>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
+            {reasoningText && (
+              <div className="thinking-reasoning-content">
+                <ReactMarkdown>{reasoningText}</ReactMarkdown>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -445,62 +465,65 @@ function App() {
         </header>
 
         <div className="messages-container">
-          {messages.map(msg => (
-            <div key={msg.id} className={`message ${msg.role}`}>
-              <div className="bubble">
-                {editingMessageId === msg.id ? (
-                  <div className="edit-container">
-                    <textarea 
-                      className="edit-input" 
-                      value={editInput} 
-                      onChange={(e) => setEditInput(e.target.value)} 
-                      autoFocus
-                    />
-                    <div className="edit-actions">
-                      <button onClick={() => setEditingMessageId(null)}>Cancel</button>
-                      <button className="primary" onClick={() => handleEditSave(msg.id)}>Save & Submit</button>
+          {messages.map(msg => {
+            const parsed = parseMessageContent(msg.content);
+            return (
+              <div key={msg.id} className={`message ${msg.role}`}>
+                <div className="bubble">
+                  {editingMessageId === msg.id ? (
+                    <div className="edit-container">
+                      <textarea 
+                        className="edit-input" 
+                        value={editInput} 
+                        onChange={(e) => setEditInput(e.target.value)} 
+                        autoFocus
+                      />
+                      <div className="edit-actions">
+                        <button onClick={() => setEditingMessageId(null)}>Cancel</button>
+                        <button className="primary" onClick={() => handleEditSave(msg.id)}>Save & Submit</button>
+                      </div>
                     </div>
+                  ) : (
+                    <>
+                      {msg.role === 'ai' && (msg.statusLogs || msg.currentStatus || parsed.thinkingText) && (
+                        <ThinkingBadge logs={msg.statusLogs} currentStatus={msg.currentStatus} reasoningText={parsed.thinkingText} />
+                      )}
+                      {msg.isHallucination ? (
+                        <div className="hallucination-warning">
+                          <strong>Warning:</strong> {msg.warningMessage}
+                          <details style={{ marginTop: '0.5rem', opacity: 0.8 }}>
+                            <summary style={{ cursor: 'pointer', fontWeight: 'bold' }}>Show Hidden Content</summary>
+                            <div style={{ marginTop: '0.5rem', opacity: 0.9 }}>
+                              <ReactMarkdown>{parsed.cleanContent}</ReactMarkdown>
+                            </div>
+                          </details>
+                        </div>
+                      ) : (
+                        <ReactMarkdown>{parsed.cleanContent}</ReactMarkdown>
+                      )}
+                      {msg.role === 'ai' && msg.citations && msg.citations.length > 0 && (
+                        <div className="citations-container">
+                          {msg.citations
+                            .filter((c: any, index: number, self: any[]) => index === self.findIndex((t: any) => t.title === c.title))
+                            .map((cit: any, i: number) => <Citation key={i} citation={cit} />)
+                          }
+                        </div>
+                      )}
+                      {msg.metric && <div className="metric">{msg.metric}</div>}
+                    </>
+                  )}
+                </div>
+                {msg.role === 'user' && editingMessageId !== msg.id && (
+                  <div className="message-actions">
+                    <button className="icon-btn" title="Edit message" onClick={() => {
+                      setEditInput(msg.content);
+                      setEditingMessageId(msg.id);
+                    }}><Edit2 size={14} /></button>
                   </div>
-                ) : (
-                  <>
-                    {msg.role === 'ai' && (msg.statusLogs || msg.currentStatus) && (
-                      <ThinkingBadge logs={msg.statusLogs} currentStatus={msg.currentStatus} />
-                    )}
-                    {msg.isHallucination ? (
-                      <div className="hallucination-warning">
-                        <strong>Warning:</strong> {msg.warningMessage}
-                        <details style={{ marginTop: '0.5rem', opacity: 0.8 }}>
-                          <summary style={{ cursor: 'pointer', fontWeight: 'bold' }}>Show Hidden Content</summary>
-                          <div style={{ marginTop: '0.5rem', opacity: 0.9 }}>
-                            <ReactMarkdown>{msg.content}</ReactMarkdown>
-                          </div>
-                        </details>
-                      </div>
-                    ) : (
-                      <ReactMarkdown>{msg.content}</ReactMarkdown>
-                    )}
-                    {msg.role === 'ai' && msg.citations && msg.citations.length > 0 && (
-                      <div className="citations-container">
-                        {msg.citations
-                          .filter((c: any, index: number, self: any[]) => index === self.findIndex((t: any) => t.title === c.title))
-                          .map((cit: any, i: number) => <Citation key={i} citation={cit} />)
-                        }
-                      </div>
-                    )}
-                    {msg.metric && <div className="metric">{msg.metric}</div>}
-                  </>
                 )}
               </div>
-              {msg.role === 'user' && editingMessageId !== msg.id && (
-                <div className="message-actions">
-                  <button className="icon-btn" title="Edit message" onClick={() => {
-                    setEditInput(msg.content);
-                    setEditingMessageId(msg.id);
-                  }}><Edit2 size={14} /></button>
-                </div>
-              )}
-            </div>
-          ))}
+            );
+          })}
           {isStreaming && (
             <div className="message ai">
               <div className="bubble">
@@ -550,6 +573,9 @@ function App() {
                 <Send size={18} />
               </button>
             )}
+          </div>
+          <div className="ui-disclaimer-footer">
+            Disclaimer: I am an AI assistant and cannot provide medical diagnoses or personalized medical advice. Please consult with a healthcare professional for guidance tailored to your specific health needs.
           </div>
         </div>
       </main>

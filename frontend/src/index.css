@@ -547,4 +547,31 @@ textarea.main-input {
 .thinking-log-item {
   color: var(--text-secondary);
 }
+.thinking-log-item p {
+  margin: 0.1em 0;
+}
+.thinking-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.thinking-reasoning-content {
+  margin-top: 0.5rem;
+  padding-top: 0.4rem;
+  border-top: 1px dashed rgba(255, 255, 255, 0.1);
+  color: var(--text-secondary);
+  font-style: italic;
+}
+.thinking-reasoning-content p {
+  margin: 0.25em 0;
+}
+.ui-disclaimer-footer {
+  text-align: center;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  opacity: 0.75;
+  margin-top: 0.4rem;
+  padding: 0 0.5rem;
+  line-height: 1.3;
+}
 .hallucination-warning { color: #d32f2f; border: 1px solid #d32f2f; background: rgba(211, 47, 47, 0.1); padding: 0.5rem; border-radius: 4px; margin-bottom: 0.5rem; font-size: 0.9em; }
