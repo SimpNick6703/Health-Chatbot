@@ -1,101 +1,123 @@
-# Healthcare AI Chatbot
+# Healthcare AI Chatbot — RAG, Guardrails & Medical Knowledge System
 
-A production-grade, high-performance healthcare chatbot built with **FastAPI**, **PostgreSQL 15**, **React (Vite + TypeScript)**, and **Nginx**. Features OpenAI Tool-Calling against verified medical knowledge bases (MedlinePlus API & WHO), real-time Server-Sent Events (SSE) streaming, collapsible Thinking/Reasoning badges, performance metrics tracking (TTFT, Verification Latency, Total Time), multi-session history persistence, and multi-layer guardrails (PII redaction, intent classification, input moderation, and LLM-as-a-Judge hallucination verification).
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-009688.svg?style=flat&logo=fastapi)](https://fastapi.tiangolo.com/)
+[![React](https://img.shields.io/badge/React-18-61DAFB.svg?style=flat&logo=react)](https://react.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-3178C6.svg?style=flat&logo=typescript)](https://www.typescriptlang.org/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-4169E1.svg?style=flat&logo=postgresql)](https://www.postgresql.org/)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED.svg?style=flat&logo=docker)](https://www.docker.com/)
+[![License](https://img.shields.io/badge/License-Evaluation-blue.svg)](#disclaimer--limitations)
 
----
+A production-grade, high-performance **Healthcare AI Chatbot** combining Retrieval-Augmented Generation (RAG), OpenAI Tool Calling (Function Calling) against verified medical knowledge bases (NIH / MedlinePlus Developer Web Services API & WHO), real-time Server-Sent Events (SSE) streaming, model reasoning extraction, performance metrics tracking, and multi-layer safety guardrails.
 
-## Key Features
-
-- **Tool-Augmented Medical Knowledge Architecture (RAG)**:
-  - **`search_knowledge_base`**: Vector search over granular local passages using Google AI Studio Gemini Embeddings (`gemini-embedding-2-preview`).
-  - **`search_medlineplus_api`**: Live search against the NIH / MedlinePlus Developer Web Services API (`wsearch.nlm.nih.gov`) returning verified topic guides and direct URL citations.
-- **PostgreSQL 15 Session Storage**:
-  - Connection pooling with `asyncpg`.
-  - Native `JSONB` storage for citations, thinking logs (`status_logs`), and timing metrics (`metadata`).
-  - Automated SQLite-to-PostgreSQL migration on container startup.
-- **Collapsible Thinking & Reasoning Process**:
-  - Streams real-time pipeline status events (safety check, tool calls, chunk retrieval count, LLM generation, Judge verification).
-  - Captures and extracts model reasoning tokens (`delta.reasoning_content`, `<think>...</think>`).
-  - Rendered with Markdown and collapsed by default.
-  - Persists across page reloads and session history navigation.
-- **Performance & Latency Tracking**:
-  - Calculates and displays real-time metrics per message turn:
-    - **TTFT**: Time-To-First-Token latency.
-    - **Verified**: Judge LLM hallucination audit duration.
-    - **Total**: End-to-end processing time.
-- **Modern React (Vite + TypeScript) Frontend**:
-  - Dark-mode glassmorphism design system.
-  - Token-by-token streaming response.
-  - Dynamic sidebar auto-titling and session management (delete, edit past messages).
-  - Persistent single medical disclaimer footer.
-- **Multi-Layer Guardrails & Observability**:
-  - **PII Redaction**: Automatic redaction of sensitive user identifiers.
-  - **Intent Classifier**: Local routing for emergency symptom redirection and diagnostic refusal.
-  - **Input Moderation**: Async API safety checks.
-  - **Judge LLM Hallucination Verification**: Post-generation entailment evaluation checking sentence claims against retrieved chunks before final response approval.
-  - **Portkey Observability**: Header metadata injection for full request trace tracking.
+> [!IMPORTANT]
+> **Medical Disclaimer**: This application is designed exclusively for general health education and informational Q&A. It cannot substitute for professional clinical medical advice, diagnosis, or treatment. Always seek the advice of a qualified healthcare provider.
 
 ---
 
-## REST API Reference
+## 🚀 Key Technical Highlights
+
+### 1. Tool-Augmented Retrieval-Augmented Generation (RAG)
+- **`search_knowledge_base`**: Dynamic vector similarity search over granular local passages (~300 chars) using Google AI Studio Gemini Embeddings (`gemini-embedding-2-preview`).
+- **`search_medlineplus_api`**: Live search against the NIH / MedlinePlus Developer Web Services API (`wsearch.nlm.nih.gov`) returning structured topic summaries and official government URLs.
+- **Connection Pooling**: Reusable `httpx.AsyncClient` session with strict 5-second timeouts for fast external API fallback.
+
+### 2. PostgreSQL 15 Session Storage & Migration
+- **High-Performance Async I/O**: Asynchronous connection pooling managed via `asyncpg`.
+- **Native JSONB Schema**: Stores citations, status logs, and timing metrics in structured `JSONB` columns.
+
+> [!NOTE]
+> **Automated Migration**: On startup, the backend automatically detects legacy SQLite `sessions.db` databases and migrates existing sessions and message histories into PostgreSQL without data loss.
+
+### 3. Collapsible Model Reasoning & Performance Metrics
+- **Reasoning Token Extractor**: Captures model reasoning (`delta.reasoning_content` or `<think>...</think>` tags) and streams pipeline execution status (`safety_check`, `tool_search`, `tool_exec`, `auditing`, `verified`).
+- **Real-Time Latency Metrics**: Measures and persists turn-by-turn performance stats:
+  - **TTFT**: Time-To-First-Token latency.
+  - **Verified**: Judge LLM hallucination evaluation duration.
+  - **Total**: End-to-end processing pipeline execution time.
+
+### 4. Modern React (Vite + TypeScript) Frontend & Nginx Proxy
+- **Glassmorphism UI**: Dark-mode interface with zero default browser styles.
+- **Dynamic Sidebar History**: Auto-titles sessions on stream start and updates dynamically without requiring page reloads.
+- **Message Editing**: Allows editing past turns with atomic history rollback and streaming response re-generation.
+
+### 5. Multi-Layer Guardrails & Observability
+- **PII Redactor**: Fast local regex scanner redacting emails, phone numbers, Aadhaar, PAN, IP addresses, and vehicle numbers.
+- **Intent Classifier**: Instant local routing for emergency symptom redirection (911 / 112) and diagnostic/prescription query refusal.
+- **Input Moderation**: Async API safety checks with domain-specific ignored categories (`health`, `pii`).
+- **Judge LLM Hallucination Verification**: Post-generation NLI entailment evaluation checking sentence claims against retrieved chunks before final response approval.
+- **Portkey AI Gateway**: Injects metadata headers (`x-portkey-metadata`) for full trace logging and user session analytics.
+
+---
+
+## 🛠️ REST API Reference
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/health` | Liveness/readiness container healthcheck. |
-| `GET` | `/api/sessions` | List active chat sessions. |
+| `GET` | `/health` | Liveness and readiness container check with PostgreSQL `SELECT 1` ping. |
+| `GET` | `/api/sessions` | List active, non-archived chat sessions. |
 | `POST` | `/api/session` | Create a new chat session record. |
-| `PATCH` | `/api/session/{session_id}` | Rename or update session title. |
-| `DELETE` | `/api/session/{session_id}` | Permanently delete a session and its message history. |
-| `GET` | `/api/session/{session_id}/history` | Fetch complete message history array for session. |
-| `POST` | `/api/chat` | Submit chat query and receive SSE event stream. |
-| `POST` | `/api/chat/edit` | Edit a past message, truncate subsequent history, and stream new response. |
+| `PATCH` | `/api/session/{session_id}` | Update session title. |
+| `DELETE` | `/api/session/{session_id}` | Soft-delete / archive a session and its message history. |
+| `GET` | `/api/session/{session_id}/history` | Fetch complete message turn history for session. |
+| `POST` | `/api/chat` | Submit user query and receive SSE event stream. |
+| `POST` | `/api/chat/edit` | Edit a past message turn, rollback history, and stream new response. |
 
 ---
 
-## Quickstart Guide
+## ⚙️ Quickstart & Deployment
 
-### 1. Environment Setup
-Copy the template environment file to `.env` and populate your API credentials:
+### 1. Environment Configuration
 
+> [!WARNING]
+> Ensure you populate all required API keys in `.env` before building the Docker containers.
+
+Copy `.env.example` to `.env`:
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env`:
+Configure `.env`:
 ```env
+# Main LLM Endpoint
 BASE_URL=https://your-llm-endpoint.com/v1
 API_KEY=your_openai_or_portkey_api_key
 MODEL_NAME=gpt-4o-mini
 
+# Guardrail & Moderation
 GUARDRAIL_BASE_URL=https://your-moderation-endpoint.com/v1
 GUARDRAIL_API_KEY=your_moderation_api_key
 GUARDRAIL_MODEL_NAME=mistral-moderation-latest
 
+# Judge LLM (Hallucination Detection)
 JUDGE_BASE_URL=https://your-llm-endpoint.com/v1
 JUDGE_API_KEY=your_judge_api_key
 JUDGE_MODEL_NAME=gpt-4o-mini
 
+# Embeddings (Google AI Studio)
 EMBEDDING_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
 EMBEDDING_API_KEY=your_gemini_api_key
 EMBEDDING_MODEL_NAME=gemini-embedding-2-preview
 
+# Database
 DATABASE_URL=postgresql://postgres:postgrespassword@db:5432/healthchatbot
 ```
 
-### 2. Launch with Docker Compose
-Start PostgreSQL, FastAPI backend, and Nginx/React frontend:
+### 2. Launching with Docker Compose
+
+Build and launch all services (PostgreSQL 15, FastAPI Backend, React/Nginx Frontend):
 
 ```bash
 docker compose up --build -d
 ```
 
-Access the application at `http://localhost:8000`.
+Access the unified web application at **`http://localhost:8000`**.
 
 ---
 
-## Automated Verification & Testing
+## 🧪 Security & Guardrail Verification
 
-To run the guardrail test suite:
+> [!TIP]
+> Run the automated red-team test suite to verify PII redaction, emergency classification, and jailbreak resistance.
 
 ```bash
 cd backend
@@ -104,6 +126,7 @@ pytest tests/test_guardrails.py -v
 
 ---
 
-## Disclaimer & Limitations
+## 📜 Disclaimer & Limitations
 
-- **Informational Health Education Only**: Designed for general medical health Q&A; does not substitute for professional medical advice, diagnosis, or treatment.
+- **Informational Health Education Only**: This system is designed solely for informational medical Q&A and general health education.
+- **Emergency Situations**: In case of a medical emergency, immediately contact your local emergency service (e.g., 911 or 112).
