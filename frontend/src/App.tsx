@@ -325,6 +325,17 @@ function App() {
 
   const Citation = ({ citation }: { citation: any }) => {
     const [expanded, setExpanded] = useState(false);
+
+    let linkUrl = citation.url;
+    if (!linkUrl || linkUrl === '#') {
+      const title = citation.title || '';
+      if (title.endsWith('.md')) {
+        linkUrl = `https://github.com/SimpNick6703/Health-Chatbot/tree/main/backend/knowledge/${title}`;
+      } else {
+        linkUrl = `https://medlineplus.gov/search?q=${encodeURIComponent(title)}`;
+      }
+    }
+
     return (
       <div className="citation-chip-wrapper">
         <button 
@@ -334,13 +345,13 @@ function App() {
         >
           <span>📚</span>
           <span>{citation.title}</span>
-          {citation.snippet && (expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />)}
+          {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
         </button>
         {expanded && (
           <div className="citation-popover">
             <p className="citation-snippet">{citation.snippet || "Verified context chunk from healthcare knowledge base."}</p>
-            {citation.url && citation.url !== '#' && (
-              <a href={citation.url} target="_blank" rel="noreferrer" className="citation-link">
+            {linkUrl && (
+              <a href={linkUrl} target="_blank" rel="noreferrer" className="citation-link">
                 View Source →
               </a>
             )}
@@ -423,7 +434,7 @@ function App() {
                     ) : (
                       <ReactMarkdown>{msg.content}</ReactMarkdown>
                     )}
-                    {msg.citations && msg.citations.length > 0 && (
+                    {msg.role === 'ai' && msg.citations && msg.citations.length > 0 && (
                       <div className="citations-container">
                         {msg.citations
                           .filter((c: any, index: number, self: any[]) => index === self.findIndex((t: any) => t.title === c.title))
