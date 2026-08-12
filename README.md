@@ -14,7 +14,7 @@ A production-grade, high-performance **Healthcare AI Chatbot** combining Retriev
 
 ---
 
-## 🚀 Key Technical Highlights
+## Key Technical Highlights
 
 ### 1. Tool-Augmented Retrieval-Augmented Generation (RAG)
 - **`search_knowledge_base`**: Dynamic vector similarity search over granular local passages (~300 chars) using Google AI Studio Gemini Embeddings (`gemini-embedding-2-preview`).
@@ -49,7 +49,7 @@ A production-grade, high-performance **Healthcare AI Chatbot** combining Retriev
 
 ---
 
-## 🛠️ REST API Reference
+## REST API Reference
 
 | Method | Endpoint | Description |
 |---|---|---|
@@ -64,7 +64,7 @@ A production-grade, high-performance **Healthcare AI Chatbot** combining Retriev
 
 ---
 
-## ⚙️ Quickstart & Deployment
+## Quickstart & Deployment
 
 ### 1. Environment Configuration
 
@@ -114,7 +114,7 @@ Access the unified web application at **`http://localhost:8000`**.
 
 ---
 
-## 🧪 Security & Guardrail Verification
+## Security & Guardrail Verification
 
 > [!TIP]
 > Run the automated red-team test suite to verify PII redaction, emergency classification, and jailbreak resistance.
@@ -126,7 +126,7 @@ pytest tests/test_guardrails.py -v
 
 ---
 
-## 📜 Disclaimer & Limitations
+## Disclaimer & Limitations
 
 - **Informational Health Education Only**: This system is designed solely for informational medical Q&A and general health education.
 - **Emergency Situations**: In case of a medical emergency, immediately contact your local emergency service (e.g., 911 or 112).
