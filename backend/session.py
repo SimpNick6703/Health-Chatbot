@@ -1,4 +1,4 @@
-"""SQLite session and knowledge cache store using aiosqlite."""
+"""PostgreSQL session and knowledge cache store using asyncpg with automated SQLite migration."""
 
 import os
 import uuid
@@ -6,6 +6,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
+import asyncpg
 import aiosqlite
 
 from config import settings
@@ -14,237 +15,265 @@ logger = logging.getLogger(__name__)
 
 
 class SessionStore:
-    """Async SQLite database store for chat sessions, messages, and RAG knowledge cache."""
+    """Async PostgreSQL database store for chat sessions, messages, and RAG knowledge cache."""
 
-    def __init__(self, db_path: Optional[str] = None) -> None:
-        """Initialize session store with database path."""
-        self.db_path: str = db_path or settings.SQLITE_PATH
+    def __init__(self) -> None:
+        """Initialize session store with connection pool set to None."""
+        self.pool: Optional[asyncpg.Pool] = None
+
+    async def connect(self) -> None:
+        """Create PostgreSQL connection pool."""
+        if not self.pool:
+            try:
+                self.pool = await asyncpg.create_pool(
+                    dsn=settings.DATABASE_URL,
+                    min_size=1,
+                    max_size=10,
+                    timeout=10.0
+                )
+                logger.info("PostgreSQL connection pool established successfully.")
+            except Exception as exc:
+                logger.error(f"Failed to establish PostgreSQL connection pool: {exc}")
+                raise exc
+
+    async def close(self) -> None:
+        """Close PostgreSQL connection pool gracefully."""
+        if self.pool:
+            await self.pool.close()
+            self.pool = None
+            logger.info("PostgreSQL connection pool closed.")
 
     async def init_db(self) -> None:
-        """Create database tables if they do not already exist and run schema migrations."""
-        db_dir = os.path.dirname(self.db_path)
-        if db_dir:
-            os.makedirs(db_dir, exist_ok=True)
+        """Create PostgreSQL database tables if they do not exist and trigger SQLite migration."""
+        if not self.pool:
+            await self.connect()
 
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute("""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
                 CREATE TABLE IF NOT EXISTS sessions (
-                    session_id TEXT PRIMARY KEY,
-                    title TEXT NOT NULL DEFAULT 'New Chat',
-                    created_at TEXT NOT NULL,
-                    last_active_at TEXT NOT NULL,
-                    is_archived INTEGER DEFAULT 0,
-                    archived_at TEXT
-                )
+                    session_id VARCHAR(100) PRIMARY KEY,
+                    title VARCHAR(255) NOT NULL DEFAULT 'New Chat',
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    last_active_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    is_archived BOOLEAN DEFAULT FALSE,
+                    archived_at TIMESTAMPTZ
+                );
             """)
-            await db.execute("""
+
+            await conn.execute("""
                 CREATE TABLE IF NOT EXISTS messages (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    session_id TEXT NOT NULL,
-                    role TEXT NOT NULL,
+                    id SERIAL PRIMARY KEY,
+                    session_id VARCHAR(100) NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+                    role VARCHAR(20) NOT NULL,
                     content TEXT NOT NULL,
-                    intent TEXT,
-                    sources TEXT,
-                    had_pii INTEGER DEFAULT 0,
-                    is_hallucinated INTEGER DEFAULT 0,
-                    flagged INTEGER DEFAULT 0,
-                    created_at TEXT NOT NULL,
-                    FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
-                )
+                    intent VARCHAR(50),
+                    sources JSONB DEFAULT '[]'::jsonb,
+                    had_pii BOOLEAN DEFAULT FALSE,
+                    is_hallucinated BOOLEAN DEFAULT FALSE,
+                    flagged BOOLEAN DEFAULT FALSE,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
             """)
-            await db.execute("""
+
+            await conn.execute("""
                 CREATE TABLE IF NOT EXISTS knowledge_cache (
-                    file_path TEXT PRIMARY KEY,
-                    content_hash TEXT NOT NULL,
-                    last_ingested_at TEXT NOT NULL,
-                    chunk_count INTEGER DEFAULT 0
-                )
+                    file_path VARCHAR(500) PRIMARY KEY,
+                    content_hash VARCHAR(100) NOT NULL,
+                    last_ingested_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    chunk_count INT DEFAULT 0
+                );
             """)
 
-            # Schema migration check: Ensure title column exists in sessions table
-            async with db.execute("PRAGMA table_info(sessions)") as cursor:
-                columns = [row[1] for row in await cursor.fetchall()]
-                if "title" not in columns:
-                    logger.info("Migrating sessions table: adding 'title' column...")
-                    await db.execute("ALTER TABLE sessions ADD COLUMN title TEXT DEFAULT 'New Chat'")
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
+            """)
 
-            await db.commit()
-            logger.info("Database schema initialized successfully.")
+        logger.info("PostgreSQL database tables and indexes verified successfully.")
+        await self.migrate_from_sqlite_if_needed()
 
-    async def create_session(self, title: str = "New Chat") -> str:
-        """Create a new chat session and store in database.
+    async def migrate_from_sqlite_if_needed(self) -> None:
+        """Migrate existing chat sessions and messages from SQLite to PostgreSQL if Postgres is empty."""
+        if not self.pool or not os.path.exists(settings.SQLITE_PATH):
+            return
 
-        Args:
-            title: Initial session title string.
+        async with self.pool.acquire() as conn:
+            pg_count = await conn.fetchval("SELECT COUNT(*) FROM sessions")
+            if pg_count > 0:
+                logger.info("PostgreSQL already contains session records. Skipping SQLite data migration.")
+                return
 
-        Returns:
-            Newly generated session_id UUID string.
-        """
-        session_id = str(uuid.uuid4())
-        now = datetime.now(timezone.utc).isoformat()
+        logger.info(f"PostgreSQL database is empty. Starting automated migration from SQLite ({settings.SQLITE_PATH})...")
+        try:
+            async with aiosqlite.connect(settings.SQLITE_PATH) as sqlite_db:
+                async with sqlite_db.execute("SELECT session_id, title, created_at, last_active_at, is_archived FROM sessions") as cursor:
+                    sqlite_sessions = await cursor.fetchall()
 
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute(
-                "INSERT INTO sessions (session_id, title, created_at, last_active_at, is_archived) VALUES (?, ?, ?, ?, 0)",
-                (session_id, title, now, now)
-            )
-            await db.commit()
+                async with sqlite_db.execute("SELECT session_id, role, content, intent, sources, had_pii, is_hallucinated, flagged FROM messages ORDER BY id ASC") as cursor:
+                    sqlite_messages = await cursor.fetchall()
 
-        logger.info(f"Created new chat session: {session_id} ('{title}')")
-        return session_id
+            async with self.pool.acquire() as conn:
+                async with conn.transaction():
+                    for s in sqlite_sessions:
+                        session_id, title, created_at, last_active_at, is_archived = s
+                        is_arch = bool(is_archived) if is_archived is not None else False
+                        await conn.execute(
+                            """
+                            INSERT INTO sessions (session_id, title, created_at, last_active_at, is_archived)
+                            VALUES ($1, $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $3)
+                            ON CONFLICT (session_id) DO NOTHING
+                            """,
+                            session_id, title or "New Chat", is_arch
+                        )
+
+                    for m in sqlite_messages:
+                        session_id, role, content, intent, sources, had_pii, is_hallucinated, flagged = m
+                        sources_json = sources if sources else "[]"
+                        try:
+                            json.loads(sources_json)
+                        except Exception:
+                            sources_json = "[]"
+
+                        await conn.execute(
+                            """
+                            INSERT INTO messages (session_id, role, content, intent, sources, had_pii, is_hallucinated, flagged)
+                            VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8)
+                            """,
+                            session_id, role, content, intent or "safe", sources_json,
+                            bool(had_pii), bool(is_hallucinated), bool(flagged)
+                        )
+
+            logger.info(f"Successfully migrated {len(sqlite_sessions)} sessions and {len(sqlite_messages)} messages from SQLite to PostgreSQL.")
+        except Exception as exc:
+            logger.error(f"Error during SQLite to PostgreSQL migration: {exc}")
 
     async def list_active_sessions(self) -> List[Dict[str, Any]]:
-        """Retrieve all active (non-archived) sessions that have at least 1 message turn.
-
-        Returns:
-            List of session dicts containing session_id, title, created_at, last_active_at.
-        """
-        async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute(
+        """Retrieve all active sessions containing at least 1 message turn."""
+        if not self.pool:
+            return []
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
                 """
                 SELECT s.session_id, s.title, s.created_at, s.last_active_at
                 FROM sessions s
                 JOIN messages m ON s.session_id = m.session_id
-                WHERE s.is_archived = 0 AND s.title IS NOT NULL AND s.title != 'New Chat' AND s.title != ''
-                GROUP BY s.session_id
+                WHERE s.is_archived = FALSE AND s.title IS NOT NULL AND s.title != 'New Chat' AND s.title != ''
+                GROUP BY s.session_id, s.title, s.created_at, s.last_active_at
                 ORDER BY s.last_active_at DESC
                 """
-            ) as cursor:
-                rows = await cursor.fetchall()
-
-        return [
-            {
-                "session_id": row[0],
-                "title": row[1],
-                "created_at": row[2],
-                "last_active_at": row[3]
-            } for row in rows
-        ]
+            )
+            return [
+                {
+                    "session_id": r["session_id"],
+                    "title": r["title"],
+                    "created_at": r["created_at"].isoformat() if hasattr(r["created_at"], "isoformat") else str(r["created_at"]),
+                    "last_active_at": r["last_active_at"].isoformat() if hasattr(r["last_active_at"], "isoformat") else str(r["last_active_at"])
+                } for r in rows
+            ]
 
     async def update_session_title(self, session_id: str, title: str) -> bool:
-        """Update session title.
-
-        Args:
-            session_id: Target session ID.
-            title: New title text.
-
-        Returns:
-            True if session existed and was updated.
-        """
-        async with aiosqlite.connect(self.db_path) as db:
-            cursor = await db.execute(
-                "UPDATE sessions SET title = ? WHERE session_id = ?",
-                (title.strip(), session_id)
+        """Update session title."""
+        if not self.pool:
+            return False
+        async with self.pool.acquire() as conn:
+            res = await conn.execute(
+                "UPDATE sessions SET title = $1 WHERE session_id = $2",
+                title.strip(), session_id
             )
-            await db.commit()
-            return cursor.rowcount > 0
+            return res != "UPDATE 0"
 
     async def create_session(self, session_id: str, title: str = "New Chat") -> None:
-        """Create a new session if it doesn't exist."""
-        now = datetime.now(timezone.utc).isoformat()
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute(
+        """Create new session if it doesn't exist."""
+        if not self.pool:
+            return
+        async with self.pool.acquire() as conn:
+            await conn.execute(
                 """
                 INSERT INTO sessions (session_id, title, created_at, last_active_at, is_archived)
-                VALUES (?, ?, ?, ?, 0)
-                ON CONFLICT(session_id) DO NOTHING
+                VALUES ($1, $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, FALSE)
+                ON CONFLICT (session_id) DO NOTHING
                 """,
-                (session_id, title.strip(), now, now)
+                session_id, title.strip()
             )
-            await db.commit()
 
     async def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
-        """Fetch session metadata by session ID.
-
-        Args:
-            session_id: Target session ID.
-
-        Returns:
-            Session dict or None if not found.
-        """
-        async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute(
-                "SELECT session_id, title, created_at, last_active_at, is_archived FROM sessions WHERE session_id = ?",
-                (session_id,)
-            ) as cursor:
-                row = await cursor.fetchone()
-                if not row:
-                    return None
-                return {
-                    "session_id": row[0],
-                    "title": row[1],
-                    "created_at": row[2],
-                    "last_active_at": row[3],
-                    "is_archived": row[4]
-                }
+        """Fetch session metadata by session ID."""
+        if not self.pool:
+            return None
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT session_id, title, created_at, last_active_at, is_archived FROM sessions WHERE session_id = $1",
+                session_id
+            )
+            if not row:
+                return None
+            return {
+                "session_id": row["session_id"],
+                "title": row["title"],
+                "created_at": str(row["created_at"]),
+                "last_active_at": str(row["last_active_at"]),
+                "is_archived": row["is_archived"]
+            }
 
     async def get_history(self, session_id: str, limit: int = 6) -> List[Dict[str, str]]:
-        """Retrieve recent conversation turn history for LLM context window.
-
-        Args:
-            session_id: Target chat session ID.
-            limit: Maximum number of recent message turns to return.
-
-        Returns:
-            List of message dicts formatted as [{'role': 'user/assistant', 'content': ...}].
-        """
-        async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute(
+        """Retrieve recent message history for context window."""
+        if not self.pool:
+            return []
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
                 """
                 SELECT role, content FROM messages
-                WHERE session_id = ?
-                ORDER BY id DESC LIMIT ?
+                WHERE session_id = $1
+                ORDER BY id DESC LIMIT $2
                 """,
-                (session_id, limit * 2)
-            ) as cursor:
-                rows = await cursor.fetchall()
-
-        history = [{"role": row[0], "content": row[1]} for row in reversed(rows)]
-        return history
+                session_id, limit * 2
+            )
+        return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
 
     async def get_full_history(self, session_id: str) -> List[Dict[str, Any]]:
-        """Retrieve complete detailed message history for session UI rendering.
-
-        Args:
-            session_id: Target chat session ID.
-
-        Returns:
-            List of message dicts with role, content, sources, is_hallucinated, created_at.
-        """
-        async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute(
+        """Retrieve complete message history for session UI rendering."""
+        if not self.pool:
+            return []
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
                 """
                 SELECT id, role, content, sources, is_hallucinated, created_at FROM messages
-                WHERE session_id = ?
+                WHERE session_id = $1
                 ORDER BY id ASC
                 """,
-                (session_id,)
-            ) as cursor:
-                rows = await cursor.fetchall()
-
+                session_id
+            )
         messages = []
-        for row in rows:
-            sources_list = json.loads(row[3]) if row[3] else []
+        for r in rows:
+            sources_val = r["sources"]
+            if isinstance(sources_val, str):
+                try:
+                    sources_list = json.loads(sources_val)
+                except Exception:
+                    sources_list = []
+            elif isinstance(sources_val, list):
+                sources_list = sources_val
+            else:
+                sources_list = []
+
             messages.append({
-                "id": row[0],
-                "role": row[1],
-                "content": row[2],
+                "id": str(r["id"]),
+                "role": r["role"],
+                "content": r["content"],
                 "sources": sources_list,
-                "is_hallucinated": bool(row[4]),
-                "created_at": row[5]
+                "is_hallucinated": bool(r["is_hallucinated"]),
+                "created_at": str(r["created_at"])
             })
         return messages
 
     async def delete_messages_from_id(self, session_id: str, message_id: int) -> None:
-        """Atomically delete all messages in a session from a specific message ID onwards.
-        Used for message editing to rollback conversation history.
-        """
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute(
-                "DELETE FROM messages WHERE session_id = ? AND id >= ?",
-                (session_id, message_id)
+        """Delete messages in a session from message_id onwards for editing."""
+        if not self.pool:
+            return
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM messages WHERE session_id = $1 AND id >= $2",
+                session_id, message_id
             )
-            await db.commit()
 
     async def save_turn(
         self,
@@ -257,123 +286,69 @@ class SessionStore:
         is_hallucinated: bool = False,
         flagged: bool = False
     ) -> None:
-        """Persist a complete user-assistant interaction turn with observability metadata.
-
-        Args:
-            session_id: Active session ID.
-            user_msg: Redacted user query message.
-            assistant_msg: Final generated assistant response message.
-            intent: Classified intent category string.
-            sources: List of cited RAG knowledge source filenames.
-            had_pii: Whether input contained PII.
-            is_hallucinated: Whether response failed hallucination check.
-            flagged: Whether turn was flagged by guardrails.
-        """
-        now = datetime.now(timezone.utc).isoformat()
-        flagged_val = 1 if flagged else 0
-        pii_val = 1 if had_pii else 0
-        hallucinated_val = 1 if is_hallucinated else 0
-        sources_str = json.dumps(sources or [])
-
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute(
-                """
-                INSERT INTO sessions (session_id, title, created_at, last_active_at, is_archived)
-                VALUES (?, 'New Chat', ?, ?, 0)
-                ON CONFLICT(session_id) DO UPDATE SET last_active_at = excluded.last_active_at
-                """,
-                (session_id, now, now)
-            )
-            await db.execute(
-                """
-                INSERT INTO messages (session_id, role, content, intent, sources, had_pii, is_hallucinated, flagged, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (session_id, "user", user_msg, intent, "[]", pii_val, 0, flagged_val, now)
-            )
-            await db.execute(
-                """
-                INSERT INTO messages (session_id, role, content, intent, sources, had_pii, is_hallucinated, flagged, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (session_id, "assistant", assistant_msg, intent, sources_str, 0, hallucinated_val, flagged_val, now)
-            )
-            await db.commit()
-
-    async def archive_session(self, session_id: str) -> bool:
-        """Soft-delete / archive a session rather than purging its records.
-
-        Args:
-            session_id: Session ID to archive.
-
-        Returns:
-            True if session existed and was archived.
-        """
-        now = datetime.now(timezone.utc).isoformat()
-        async with aiosqlite.connect(self.db_path) as db:
-            cursor = await db.execute(
-                "UPDATE sessions SET is_archived = 1, archived_at = ? WHERE session_id = ?",
-                (now, session_id)
-            )
-            await db.commit()
-            return cursor.rowcount > 0
+        """Persist user-assistant interaction turn."""
+        if not self.pool:
+            return
+        sources_json = json.dumps(sources or [])
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    """
+                    INSERT INTO sessions (session_id, title, created_at, last_active_at, is_archived)
+                    VALUES ($1, 'New Chat', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, FALSE)
+                    ON CONFLICT(session_id) DO UPDATE SET last_active_at = CURRENT_TIMESTAMP
+                    """,
+                    session_id
+                )
+                await conn.execute(
+                    """
+                    INSERT INTO messages (session_id, role, content, intent, sources, had_pii, is_hallucinated, flagged)
+                    VALUES ($1, 'user', $2, $3, '[]'::jsonb, $4, FALSE, $5)
+                    """,
+                    session_id, user_msg, intent, had_pii, flagged
+                )
+                await conn.execute(
+                    """
+                    INSERT INTO messages (session_id, role, content, intent, sources, had_pii, is_hallucinated, flagged)
+                    VALUES ($1, 'assistant', $2, $3, $4::jsonb, FALSE, $5, $6)
+                    """,
+                    session_id, assistant_msg, intent, sources_json, is_hallucinated, flagged
+                )
 
     async def delete_session(self, session_id: str) -> bool:
-        """Permanently delete a chat session and all its messages.
-
-        Args:
-            session_id: Session ID to delete.
-
-        Returns:
-            True if session existed and was deleted.
-        """
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
-            cursor = await db.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
-            await db.commit()
-            return cursor.rowcount > 0
+        """Permanently delete session and messages."""
+        if not self.pool:
+            return False
+        async with self.pool.acquire() as conn:
+            res = await conn.execute("DELETE FROM sessions WHERE session_id = $1", session_id)
+            return res != "DELETE 0"
 
     async def get_cache_hash(self, file_path: str) -> Optional[str]:
-        """Fetch cached content SHA-256 hash for a knowledge document file.
-
-        Args:
-            file_path: Relative or absolute file path.
-
-        Returns:
-            Stored hash string or None if not cached.
-        """
-        async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute(
-                "SELECT content_hash FROM knowledge_cache WHERE file_path = ?",
-                (file_path,)
-            ) as cursor:
-                row = await cursor.fetchone()
-                return row[0] if row else None
+        """Fetch cached content SHA-256 hash for document."""
+        if not self.pool:
+            return None
+        async with self.pool.acquire() as conn:
+            val = await conn.fetchval("SELECT content_hash FROM knowledge_cache WHERE file_path = $1", file_path)
+            return val
 
     async def update_cache_hash(
         self, file_path: str, content_hash: str, chunk_count: int
     ) -> None:
-        """Update or insert document content hash in knowledge_cache table.
-
-        Args:
-            file_path: File path key.
-            content_hash: SHA-256 hex string.
-            chunk_count: Number of chunks indexed into vector DB.
-        """
-        now = datetime.now(timezone.utc).isoformat()
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute(
+        """Update or insert document content hash in knowledge_cache."""
+        if not self.pool:
+            return
+        async with self.pool.acquire() as conn:
+            await conn.execute(
                 """
                 INSERT INTO knowledge_cache (file_path, content_hash, last_ingested_at, chunk_count)
-                VALUES (?, ?, ?, ?)
+                VALUES ($1, $2, CURRENT_TIMESTAMP, $3)
                 ON CONFLICT(file_path) DO UPDATE SET
-                    content_hash = excluded.content_hash,
-                    last_ingested_at = excluded.last_ingested_at,
-                    chunk_count = excluded.chunk_count
+                    content_hash = EXCLUDED.content_hash,
+                    last_ingested_at = CURRENT_TIMESTAMP,
+                    chunk_count = EXCLUDED.chunk_count
                 """,
-                (file_path, content_hash, now, chunk_count)
+                file_path, content_hash, chunk_count
             )
-            await db.commit()
 
 
 session_store = SessionStore()

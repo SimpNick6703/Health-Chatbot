@@ -87,7 +87,8 @@ async def process_query(
     except Exception as exc:
         logger.error(f"Auto-titling failed for session {session_id}: {exc}")
 
-    # 1. PII Redaction
+    # 1. PII Redaction & Moderation
+    yield {"event": "status", "data": json.dumps({"stage": "safety_check", "label": "Checking input safety and moderation rules..."})}
     cleaned_text, had_pii, pii_details = pii_detector.detect_and_redact(user_message)
     if had_pii:
         logger.info(f"Session {session_id}: PII detected and redacted.")
@@ -131,17 +132,12 @@ async def process_query(
     history = await session_store.get_history(session_id, limit=settings.SESSION_MAX_TURNS)
     messages = format_system_messages(SYSTEM_PROMPT_CONTENT, history, cleaned_text, images)
 
-    # Initial completion to check if LLM requests tool execution
-    logger.info(f"Session {session_id}: Initiating LLM generate_tool_completion.")
+    yield {"event": "status", "data": json.dumps({"stage": "tool_search", "label": "Searching health knowledge resources..."})}
     tool_message = await llm_client.generate_tool_completion(messages, await get_openai_tools(), session_id)
-    logger.info(f"Session {session_id}: LLM generate_tool_completion finished.")
     citations: List[CitationItem] = []
     tool_chunks: List[RetrievedChunk] = []
 
     if tool_message and getattr(tool_message, "tool_calls", None):
-        yield {"event": "status", "data": json.dumps({"stage": "executing_tools"})}
-
-        # Convert message object to dict format for context payload
         tool_msg_dict = {
             "role": "assistant",
             "content": tool_message.content,
@@ -160,6 +156,8 @@ async def process_query(
 
         for tc in tool_message.tool_calls:
             tool_name = tc.function.name
+            readable_tool = "MedlinePlus API" if "medlineplus" in tool_name else "local knowledge base"
+            yield {"event": "status", "data": json.dumps({"stage": "tool_exec", "label": f"Executing search query on {readable_tool}..."})}
             try:
                 args = json.loads(tc.function.arguments)
             except Exception:
@@ -186,6 +184,7 @@ async def process_query(
             })
 
     # 5. Stream Final LLM Token Response
+    yield {"event": "status", "data": json.dumps({"stage": "generating", "label": "Generating response..."})}
     collected_response: str = ""
     try:
         async for token in llm_client.generate_stream(messages, session_id):
@@ -197,13 +196,50 @@ async def process_query(
     except Exception as exc:
         logger.error(f"LLM streaming request failed: {exc}")
         if images:
-            yield {"event": "error", "data": json.dumps({"message": "I'm sorry, I was unable to process the uploaded images at this time. Please try again without the images or check your connection."})}
+            yield {"event": "error", "data": json.dumps({"message": "Unable to process uploaded images. Please try again."})}
         else:
             yield {"event": "error", "data": json.dumps({"message": "Connection lost or streaming error."})}
         return
 
     # 6. Hallucination Detection Verification Stage
-    yield {"event": "status", "data": json.dumps({"stage": "checking_hallucination"})}
+    yield {"event": "status", "data": json.dumps({"stage": "auditing", "label": "Auditing answer quality with Judge LLM..."})}
+
+    chunk_texts = [c.content for c in tool_chunks]
+    is_hallucinated = await hallucination_detector.detect_hallucination(
+        response_text=collected_response,
+        source_chunks=chunk_texts,
+        session_id=session_id
+    )
+
+    citations_payload = [c.model_dump() for c in citations]
+    sources_payload = list(set(c.title for c in citations))
+
+    if is_hallucinated:
+        logger.warning(f"Session {session_id}: Hallucination detected.")
+        warn_msg = "Potential hallucination or unverified claim detected."
+        await session_store.save_turn(
+            session_id=session_id,
+            user_msg=cleaned_text,
+            assistant_msg=collected_response,
+            intent="safe",
+            sources=citations_payload,
+            had_pii=had_pii,
+            is_hallucinated=True,
+            flagged=True
+        )
+        yield {
+            "event": "error",
+            "data": json.dumps({
+                "type": "hallucination",
+                "is_hallucinated": True,
+                "message": warn_msg,
+                "raw_response": collected_response,
+                "citations": citations_payload
+            })
+        }
+        return
+
+    yield {"event": "status", "data": json.dumps({"stage": "verified", "label": "Response verified."})}
 
     chunk_texts = [c.content for c in tool_chunks]
     is_hallucinated = await hallucination_detector.detect_hallucination(

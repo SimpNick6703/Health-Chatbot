@@ -488,4 +488,63 @@ textarea.main-input {
 .edit-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
 .edit-actions button { padding: 0.25rem 0.75rem; border-radius: 4px; cursor: pointer; border: 1px solid var(--border); background: var(--bg-secondary); color: var(--text-primary); }
 .edit-actions button.primary { background: var(--accent-primary); color: white; border-color: var(--accent-primary); }
+
+/* Thinking Process Badge */
+.thinking-container {
+  margin-bottom: 0.5rem;
+  font-size: 0.8rem;
+  border-bottom: 1px dashed var(--glass-border);
+  padding-bottom: 0.4rem;
+}
+.thinking-toggle-btn {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--glass-border);
+  color: var(--text-secondary);
+  padding: 0.2rem 0.5rem;
+  border-radius: 6px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  transition: all 0.2s ease;
+}
+.thinking-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+}
+.thinking-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+  display: inline-block;
+  animation: pulse 1.5s infinite;
+}
+@keyframes pulse {
+  0% { opacity: 0.4; }
+  50% { opacity: 1; }
+  100% { opacity: 0.4; }
+}
+.thinking-title {
+  max-width: 320px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.thinking-logs {
+  margin-top: 0.4rem;
+  padding: 0.4rem 0.6rem;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+.thinking-log-item {
+  color: var(--text-secondary);
+}
 .hallucination-warning { color: #d32f2f; border: 1px solid #d32f2f; background: rgba(211, 47, 47, 0.1); padding: 0.5rem; border-radius: 4px; margin-bottom: 0.5rem; font-size: 0.9em; }

@@ -33,7 +33,8 @@ logger = logging.getLogger("main")
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Lifespan context manager for application startup and shutdown tasks."""
-    logger.info("Initializing database schema...")
+    logger.info("Connecting to PostgreSQL and initializing database schema...")
+    await session_store.connect()
     await session_store.init_db()
 
     knowledge_dir = os.path.join(os.path.dirname(__file__), "knowledge")
@@ -45,6 +46,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
     logger.info("Application startup initialization complete.")
     yield
+    logger.info("Closing PostgreSQL connection pool...")
+    await session_store.close()
     logger.info("Application shutdown.")
 
 

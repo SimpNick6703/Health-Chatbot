@@ -19,6 +19,8 @@ interface Message {
   metric: string | null;
   isHallucination?: boolean;
   warningMessage?: string;
+  statusLogs?: string[];
+  currentStatus?: string;
 }
 
 const initialMessage: Message = { id: 'msg-1', role: 'ai', content: 'Hello! I am your AI Health Assistant. How can I help you today?', citations: [], metric: null };
@@ -157,6 +159,16 @@ function App() {
               }
               try {
                 const parsed = JSON.parse(dataStr);
+                if (parsed.label || parsed.stage) {
+                  const statusMsg = parsed.label || parsed.stage;
+                  setMessages(prev => prev.map(m => {
+                    if (m.id === aiMessageId) {
+                      const logs = m.statusLogs ? [...m.statusLogs, statusMsg] : [statusMsg];
+                      return { ...m, currentStatus: statusMsg, statusLogs: logs };
+                    }
+                    return m;
+                  }));
+                }
                 const tokenVal = parsed.token || parsed.content;
                 if (tokenVal) {
                   aiContent += tokenVal;
@@ -323,6 +335,37 @@ function App() {
     }
   };
 
+  const ThinkingBadge = ({ logs, currentStatus }: { logs?: string[]; currentStatus?: string }) => {
+    const [expanded, setExpanded] = useState(false);
+    if ((!logs || logs.length === 0) && !currentStatus) return null;
+
+    const displayLogs = logs && logs.length > 0 ? logs : (currentStatus ? [currentStatus] : []);
+    const lastStatus = currentStatus || displayLogs[displayLogs.length - 1];
+
+    return (
+      <div className="thinking-container">
+        <button
+          type="button"
+          className="thinking-toggle-btn"
+          onClick={() => setExpanded(!expanded)}
+        >
+          <span className="thinking-dot"></span>
+          <span className="thinking-title">Thinking: {lastStatus}</span>
+          {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+        </button>
+        {expanded && (
+          <div className="thinking-logs">
+            {displayLogs.map((log, idx) => (
+              <div key={idx} className="thinking-log-item">
+                - {log}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const Citation = ({ citation }: { citation: any }) => {
     const [expanded, setExpanded] = useState(false);
 
@@ -343,7 +386,6 @@ function App() {
           onClick={() => setExpanded(!expanded)}
           type="button"
         >
-          <span>📚</span>
           <span>{citation.title}</span>
           {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
         </button>
@@ -421,6 +463,9 @@ function App() {
                   </div>
                 ) : (
                   <>
+                    {msg.role === 'ai' && (msg.statusLogs || msg.currentStatus) && (
+                      <ThinkingBadge logs={msg.statusLogs} currentStatus={msg.currentStatus} />
+                    )}
                     {msg.isHallucination ? (
                       <div className="hallucination-warning">
                         <strong>Warning:</strong> {msg.warningMessage}

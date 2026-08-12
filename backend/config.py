@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     # Storage & Pipeline Settings
     CHROMA_PERSIST_DIR: str = "/data/chroma"
     SQLITE_PATH: str = "/data/sessions.db"
+    DATABASE_URL: str = "postgresql://postgres:postgrespassword@db:5432/healthchatbot"
     RAG_TOP_K: int = 5
     RAG_SIMILARITY_THRESHOLD: float = 0.3
     SESSION_MAX_TURNS: int = 6
